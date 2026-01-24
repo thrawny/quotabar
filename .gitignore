@@ -1,0 +1,8 @@
+/target
+/lab
+Cargo.lock
+*.swp
+*.swo
+*~
+.direnv/
+result

@@ -1,0 +1,39 @@
+[package]
+name = "quotabar"
+version = "0.1.0"
+edition = "2021"
+description = "Monitor API quota/usage for AI coding tools in Waybar"
+license = "MIT"
+
+[[bin]]
+name = "quotabar"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+
+# GUI
+gtk4 = "0.10"
+gtk4-layer-shell = "0.7"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Directories
+dirs = "6"
+
+[dev-dependencies]
+pretty_assertions = "1"
