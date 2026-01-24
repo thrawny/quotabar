@@ -1,69 +1,25 @@
-# quotabar development commands
-# Run `direnv allow` to auto-activate the dev shell
-
 # Show available commands
 default:
     @just --list
 
-# Enter dev shell (flakes)
-shell:
-    nix develop
-
-# Build the project
-build:
-    cargo build
-
-# Build release
-release:
-    cargo build --release
-
-# Run with mock data (primary dev workflow)
+# Run with mock data
 mock:
     cargo run -- popup --mock
 
-# Run popup (reads cache)
+# Run popup
 popup:
     cargo run -- popup
 
-# Run waybar output
-waybar:
-    cargo run -- waybar
-
-# Force fetch and update cache
+# Fetch and update cache
 fetch:
-    cargo run -- fetch
-
-# Print status to terminal
-status:
-    cargo run -- status
-
-# Run tests
-test:
-    cargo test
-
-# Run clippy
-lint:
-    cargo clippy -- -D warnings
-
-# Format code
-fmt:
-    cargo fmt
-
-# Check formatting
-check-fmt:
-    cargo fmt -- --check
-
-# Full check (format, lint, test)
-check: check-fmt lint test
-
-# Clean build artifacts
-clean:
-    cargo clean
-
-# Watch and rebuild on changes (requires cargo-watch)
-watch:
-    cargo watch -x 'run -- popup --mock'
+    cargo run -- waybar
 
 # Install locally
 install:
     cargo install --path .
+
+# Format, lint, and test
+check:
+    cargo fmt
+    cargo clippy --fix --allow-dirty -- -D warnings
+    cargo test

@@ -89,20 +89,40 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) {
     });
     window.add_controller(key_controller);
 
-    // Close on focus loss
+    // Close on any click
     let window_clone = window.clone();
-    let focus_controller = gtk4::EventControllerFocus::new();
-    focus_controller.connect_leave(move |_| {
+    let click_controller = gtk4::GestureClick::new();
+    click_controller.connect_released(move |_, _, _, _| {
         window_clone.close();
     });
-    window.add_controller(focus_controller);
+    window.add_controller(click_controller);
+
+    // Track active state for visual feedback
+    let main_box_clone = main_box.clone();
+    window.connect_is_active_notify(move |win| {
+        if win.is_active() {
+            main_box_clone.add_css_class("focused");
+        } else {
+            main_box_clone.remove_css_class("focused");
+        }
+    });
 
     window.present();
 }
 
 fn load_css() {
     let provider = CssProvider::new();
-    provider.load_from_data(include_str!("popup.css"));
+
+    // Try user CSS first, fall back to built-in
+    let user_css = dirs::config_dir()
+        .map(|p| p.join("quotabar").join("style.css"))
+        .filter(|p| p.exists());
+
+    if let Some(path) = user_css {
+        provider.load_from_path(&path);
+    } else {
+        provider.load_from_data(include_str!("popup.css"));
+    }
 
     gtk4::style_context_add_provider_for_display(
         &Display::default().expect("Could not get default display"),
@@ -151,30 +171,30 @@ fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
 
     section.append(&header);
 
-    // Primary quota bar
+    // Primary quota bar (5-hour session)
     if let Some(ref primary) = snapshot.primary {
         let bar = create_quota_bar(
-            "Session",
+            "Current session",
             primary.used_percent,
             primary.reset_description.as_deref(),
         );
         section.append(&bar);
     }
 
-    // Secondary quota bar
+    // Secondary quota bar (7-day all models)
     if let Some(ref secondary) = snapshot.secondary {
         let bar = create_quota_bar(
-            "Weekly",
+            "Current week (all models)",
             secondary.used_percent,
             secondary.reset_description.as_deref(),
         );
         section.append(&bar);
     }
 
-    // Tertiary quota bar
+    // Tertiary quota bar (7-day model-specific)
     if let Some(ref tertiary) = snapshot.tertiary {
         let bar = create_quota_bar(
-            "Opus",
+            "Current week (Sonnet only)",
             tertiary.used_percent,
             tertiary.reset_description.as_deref(),
         );
@@ -205,24 +225,9 @@ fn create_quota_bar(label: &str, used_percent: f64, reset: Option<&str>) -> GtkB
     let container = GtkBox::new(Orientation::Vertical, 4);
     container.add_css_class("quota-bar-container");
 
-    // Label row
-    let label_row = GtkBox::new(Orientation::Horizontal, 0);
-
-    let label_widget = Label::new(Some(label));
-    label_widget.add_css_class("quota-label");
-    label_row.append(&label_widget);
-
-    let percent_label = Label::new(Some(&format!("{:.0}%", 100.0 - used_percent)));
-    percent_label.add_css_class("quota-percent");
-    percent_label.set_hexpand(true);
-    percent_label.set_halign(Align::End);
-    label_row.append(&percent_label);
-
-    container.append(&label_row);
-
-    // Progress bar (shows remaining, not used)
+    // Progress bar (shows used percentage)
     let bar = ProgressBar::new();
-    bar.set_fraction((100.0 - used_percent) / 100.0);
+    bar.set_fraction(used_percent / 100.0);
     bar.add_css_class("quota-bar");
 
     // Add status class based on usage
@@ -233,6 +238,21 @@ fn create_quota_bar(label: &str, used_percent: f64, reset: Option<&str>) -> GtkB
     }
 
     container.append(&bar);
+
+    // Label row with percentage
+    let label_row = GtkBox::new(Orientation::Horizontal, 0);
+
+    let label_widget = Label::new(Some(label));
+    label_widget.add_css_class("quota-label");
+    label_row.append(&label_widget);
+
+    let percent_label = Label::new(Some(&format!("{:.0}% used", used_percent)));
+    percent_label.add_css_class("quota-percent");
+    percent_label.set_hexpand(true);
+    percent_label.set_halign(Align::End);
+    label_row.append(&percent_label);
+
+    container.append(&label_row);
 
     // Reset time
     if let Some(reset_text) = reset {
@@ -249,12 +269,12 @@ fn create_footer(snapshots: &HashMap<Provider, UsageSnapshot>) -> GtkBox {
     let footer = GtkBox::new(Orientation::Horizontal, 8);
     footer.add_css_class("footer");
 
-    // Find most recent update time
+    // Find most recent update time (convert to local)
     let last_update = snapshots
         .values()
         .map(|s| s.updated_at)
         .max()
-        .map(|t| t.format("%H:%M").to_string())
+        .map(|t| t.with_timezone(&chrono::Local).format("%H:%M").to_string())
         .unwrap_or_else(|| "Unknown".to_string());
 
     let update_label = Label::new(Some(&format!("Updated at {}", last_update)));

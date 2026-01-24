@@ -1,28 +1,36 @@
-/* quotabar popup styles */
+/* quotabar popup - molokai theme */
+
+window {
+    background-color: transparent;
+}
 
 .popup-container {
-    background-color: #1e1e2e;
-    border: 1px solid #45475a;
+    background-color: #1c1c1c;
+    border: 1px solid #49483e;
     border-radius: 12px;
     padding: 16px;
     min-width: 280px;
 }
 
+.popup-container.focused {
+    border-color: #f92672;
+}
+
 .header {
     padding-bottom: 12px;
-    border-bottom: 1px solid #45475a;
+    border-bottom: 1px solid #49483e;
     margin-bottom: 12px;
 }
 
 .header-title {
     font-size: 14px;
     font-weight: bold;
-    color: #cdd6f4;
+    color: #f8f8f2;
 }
 
 .provider-section {
     padding: 12px 0;
-    border-bottom: 1px solid #313244;
+    border-bottom: 1px solid #49483e;
 }
 
 .provider-section:last-of-type {
@@ -35,21 +43,21 @@
 
 .provider-icon {
     font-size: 18px;
-    color: #89b4fa;
+    color: #f92672;
 }
 
 .provider-name {
     font-size: 14px;
     font-weight: 600;
-    color: #cdd6f4;
+    color: #f8f8f2;
 }
 
 .plan-badge {
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 4px;
-    background-color: #45475a;
-    color: #a6adc8;
+    background-color: #49483e;
+    color: #a6e22e;
 }
 
 .quota-bar-container {
@@ -58,13 +66,13 @@
 
 .quota-label {
     font-size: 12px;
-    color: #a6adc8;
+    color: #75715e;
 }
 
 .quota-percent {
     font-size: 12px;
     font-weight: 600;
-    color: #cdd6f4;
+    color: #f8f8f2;
 }
 
 .quota-bar {
@@ -73,50 +81,50 @@
 }
 
 .quota-bar trough {
-    background-color: #313244;
+    background-color: #49483e;
     border-radius: 4px;
     min-height: 8px;
 }
 
 .quota-bar progress {
-    background-color: #a6e3a1;
+    background-color: #a6e22e;
     border-radius: 4px;
     min-height: 8px;
 }
 
 .quota-bar.warning progress {
-    background-color: #f9e2af;
+    background-color: #e6db74;
 }
 
 .quota-bar.critical progress {
-    background-color: #f38ba8;
+    background-color: #f92672;
 }
 
 .reset-time {
     font-size: 11px;
-    color: #6c7086;
+    color: #75715e;
     margin-top: 2px;
 }
 
 .cost-info {
     margin-top: 8px;
     padding: 8px;
-    background-color: #313244;
+    background-color: #49483e;
     border-radius: 6px;
 }
 
 .cost-text {
     font-size: 12px;
-    color: #a6adc8;
+    color: #f8f8f2;
 }
 
 .footer {
     padding-top: 12px;
     margin-top: 8px;
-    border-top: 1px solid #45475a;
+    border-top: 1px solid #49483e;
 }
 
 .footer-text {
     font-size: 11px;
-    color: #6c7086;
+    color: #75715e;
 }
