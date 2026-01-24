@@ -33,6 +33,10 @@ window {
     border-bottom: 1px solid #49483e;
 }
 
+.provider-section.selected .provider-icon {
+    color: #f92672;
+}
+
 .provider-section:last-of-type {
     border-bottom: none;
 }
@@ -50,6 +54,12 @@ window {
     font-size: 14px;
     font-weight: 600;
     color: #f8f8f2;
+    border-bottom: 3px solid transparent;
+    padding-bottom: 4px;
+}
+
+.provider-section.selected .provider-name {
+    border-bottom-color: currentColor;
 }
 
 .plan-badge {

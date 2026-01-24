@@ -18,6 +18,8 @@ pub struct Config {
 pub struct GeneralConfig {
     #[serde(default = "default_refresh_interval")]
     pub refresh_interval: String,
+    #[serde(default)]
+    pub selected_provider: Option<Provider>,
 }
 
 fn default_refresh_interval() -> String {
@@ -28,6 +30,7 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             refresh_interval: default_refresh_interval(),
+            selected_provider: None,
         }
     }
 }
@@ -97,6 +100,16 @@ impl Config {
         } else {
             Ok(Config::default())
         }
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let path = Self::config_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = toml::to_string_pretty(self)?;
+        std::fs::write(&path, content)?;
+        Ok(())
     }
 
     pub fn is_provider_enabled(&self, provider: Provider) -> bool {

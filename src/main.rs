@@ -4,8 +4,10 @@ use anyhow::Result;
 use cache::CacheState;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
+use config::Config;
 use models::{Provider, UsageSnapshot};
 use providers::claude::ClaudeProvider;
+use providers::codex::CodexProvider;
 use providers::ProviderFetcher;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -54,26 +56,39 @@ async fn main() -> Result<()> {
             println!("{}", serde_json::to_string(&output).unwrap());
         }
         Commands::Status => {
-            let snapshot = fetch_claude().await;
-            match snapshot {
+            match fetch_claude().await {
                 Ok(s) => print_status(&s),
                 Err(e) => eprintln!("Claude: {}", e),
             }
+            match fetch_codex().await {
+                Ok(s) => print_status(&s),
+                Err(e) => eprintln!("Codex: {}", e),
+            }
         }
         Commands::Fetch => {
-            let snapshot = fetch_claude().await;
-            match snapshot {
+            let mut snapshots = HashMap::new();
+
+            match fetch_claude().await {
                 Ok(s) => {
-                    let mut snapshots = HashMap::new();
                     snapshots.insert(Provider::Claude, s);
-                    let state = CacheState {
-                        snapshots,
-                        updated_at: Utc::now(),
-                    };
-                    state.save()?;
-                    println!("Cache updated at {}", CacheState::cache_path().display());
                 }
                 Err(e) => eprintln!("Failed to fetch Claude: {}", e),
+            }
+
+            match fetch_codex().await {
+                Ok(s) => {
+                    snapshots.insert(Provider::Codex, s);
+                }
+                Err(e) => eprintln!("Failed to fetch Codex: {}", e),
+            }
+
+            if !snapshots.is_empty() {
+                let state = CacheState {
+                    snapshots,
+                    updated_at: Utc::now(),
+                };
+                state.save()?;
+                println!("Cache updated at {}", CacheState::cache_path().display());
             }
         }
     }
@@ -83,6 +98,11 @@ async fn main() -> Result<()> {
 
 async fn fetch_claude() -> Result<models::UsageSnapshot> {
     let provider = ClaudeProvider::new();
+    provider.fetch().await
+}
+
+async fn fetch_codex() -> Result<models::UsageSnapshot> {
+    let provider = CodexProvider::new();
     provider.fetch().await
 }
 
@@ -138,11 +158,15 @@ struct WaybarOutput {
 }
 
 async fn waybar_output() -> WaybarOutput {
-    // Fetch from all providers (currently just Claude)
+    // Fetch from all providers (currently Claude + Codex)
     let mut snapshots = HashMap::new();
+    let config = Config::load().unwrap_or_default();
 
     if let Ok(snapshot) = fetch_claude().await {
         snapshots.insert(Provider::Claude, snapshot);
+    }
+    if let Ok(snapshot) = fetch_codex().await {
+        snapshots.insert(Provider::Codex, snapshot);
     }
 
     // Save to cache
@@ -155,12 +179,19 @@ async fn waybar_output() -> WaybarOutput {
     }
 
     // Build output from snapshots
-    build_waybar_output(&snapshots)
+    build_waybar_output(&snapshots, config.general.selected_provider)
 }
 
-fn build_waybar_output(snapshots: &HashMap<Provider, UsageSnapshot>) -> WaybarOutput {
-    // For now, just use Claude (will add agent selection later)
-    let Some(snapshot) = snapshots.get(&Provider::Claude) else {
+fn build_waybar_output(
+    snapshots: &HashMap<Provider, UsageSnapshot>,
+    selected_provider: Option<Provider>,
+) -> WaybarOutput {
+    let snapshot = selected_provider
+        .and_then(|provider| snapshots.get(&provider))
+        .or_else(|| snapshots.get(&Provider::Claude))
+        .or_else(|| snapshots.get(&Provider::Codex))
+        .or_else(|| snapshots.get(&Provider::OpenCode));
+    let Some(snapshot) = snapshot else {
         return WaybarOutput {
             text: "󰧑 --".to_string(),
             tooltip: "No data available".to_string(),

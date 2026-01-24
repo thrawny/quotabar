@@ -1,4 +1,5 @@
 pub mod claude;
+pub mod codex;
 
 use crate::models::UsageSnapshot;
 use anyhow::Result;

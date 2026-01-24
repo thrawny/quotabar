@@ -1,4 +1,5 @@
 use crate::cache::CacheState;
+use crate::config::Config;
 use crate::mock::mock_snapshots;
 use crate::models::{Provider, UsageSnapshot};
 use anyhow::Result;
@@ -9,14 +10,25 @@ use gtk4::{
     ProgressBar,
 };
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 const APP_ID: &str = "com.quotabar.popup";
 
 pub fn run(use_mock: bool) -> Result<()> {
     let app = Application::builder().application_id(APP_ID).build();
+    let window_state: Rc<RefCell<Option<ApplicationWindow>>> = Rc::new(RefCell::new(None));
 
     app.connect_activate(move |app| {
+        if let Some(window) = window_state.borrow().as_ref() {
+            if window.is_visible() {
+                window.close();
+                app.quit();
+                return;
+            }
+        }
+
         let snapshots = if use_mock {
             mock_snapshots()
         } else {
@@ -27,19 +39,25 @@ pub fn run(use_mock: bool) -> Result<()> {
                 .unwrap_or_default()
         };
 
-        build_ui(app, snapshots);
+        let window = build_ui(app, snapshots);
+        *window_state.borrow_mut() = Some(window);
     });
 
     app.run_with_args::<&str>(&[]);
     Ok(())
 }
 
-fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) {
+fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) -> ApplicationWindow {
     let window = ApplicationWindow::builder()
         .application(app)
         .default_width(320)
         .default_height(400)
         .build();
+    let app_clone = app.clone();
+    window.connect_close_request(move |_| {
+        app_clone.quit();
+        gtk4::glib::Propagation::Proceed
+    });
 
     // Layer shell setup
     window.init_layer_shell();
@@ -59,13 +77,58 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) {
 
     // Header
     let header = create_header();
+    header.add_css_class("clickable");
+    let window_clone = window.clone();
+    let header_click = gtk4::GestureClick::new();
+    header_click.connect_released(move |_, _, _, _| {
+        window_clone.close();
+    });
+    header.add_controller(header_click);
     main_box.append(&header);
+
+    let selected_provider = Config::load()
+        .ok()
+        .and_then(|config| config.general.selected_provider);
+    let selected_state: Rc<RefCell<Option<Provider>>> = Rc::new(RefCell::new(selected_provider));
+    let sections: Rc<RefCell<Vec<(Provider, GtkBox)>>> = Rc::new(RefCell::new(Vec::new()));
 
     // Provider sections
     let providers = [Provider::Claude, Provider::Codex, Provider::OpenCode];
     for provider in providers {
         if let Some(snapshot) = snapshots.get(&provider) {
             let section = create_provider_section(snapshot);
+            if Some(snapshot.provider) == selected_provider {
+                section.add_css_class("selected");
+            }
+            sections
+                .borrow_mut()
+                .push((snapshot.provider, section.clone()));
+
+            let section_provider = snapshot.provider;
+            let sections_clone = Rc::clone(&sections);
+            let selected_state = Rc::clone(&selected_state);
+            let window_clone = window.clone();
+            let click_controller = gtk4::GestureClick::new();
+            click_controller.connect_released(move |_, _, _, _| {
+                let mut current = selected_state.borrow_mut();
+                if *current == Some(section_provider) {
+                    window_clone.close();
+                    return;
+                }
+                if let Ok(mut config) = Config::load() {
+                    config.general.selected_provider = Some(section_provider);
+                    let _ = config.save();
+                }
+                *current = Some(section_provider);
+                for (provider, section) in sections_clone.borrow().iter() {
+                    if *provider == section_provider {
+                        section.add_css_class("selected");
+                    } else {
+                        section.remove_css_class("selected");
+                    }
+                }
+            });
+            section.add_controller(click_controller);
             main_box.append(&section);
         }
     }
@@ -80,7 +143,10 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) {
     let window_clone = window.clone();
     let key_controller = gtk4::EventControllerKey::new();
     key_controller.connect_key_pressed(move |_, key, _, _| {
-        if key == gtk4::gdk::Key::Escape {
+        if key == gtk4::gdk::Key::Escape
+            || key == gtk4::gdk::Key::Return
+            || key == gtk4::gdk::Key::KP_Enter
+        {
             window_clone.close();
             gtk4::glib::Propagation::Stop
         } else {
@@ -88,14 +154,6 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) {
         }
     });
     window.add_controller(key_controller);
-
-    // Close on any click
-    let window_clone = window.clone();
-    let click_controller = gtk4::GestureClick::new();
-    click_controller.connect_released(move |_, _, _, _| {
-        window_clone.close();
-    });
-    window.add_controller(click_controller);
 
     // Track active state for visual feedback
     let main_box_clone = main_box.clone();
@@ -108,6 +166,7 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) {
     });
 
     window.present();
+    window
 }
 
 fn load_css() {
