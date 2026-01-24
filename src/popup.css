@@ -42,24 +42,26 @@ window {
 }
 
 .provider-header {
-    margin-bottom: 8px;
+    margin-bottom: 6px;
+    align-items: center;
 }
 
 .provider-icon {
-    font-size: 18px;
-    color: #f92672;
+    min-width: 16px;
+    min-height: 16px;
 }
 
 .provider-name {
     font-size: 14px;
     font-weight: 600;
     color: #f8f8f2;
-    border-bottom: 3px solid transparent;
-    padding-bottom: 4px;
 }
 
-.provider-section.selected .provider-name {
-    border-bottom-color: currentColor;
+.provider-section.selected .provider-header {
+    box-shadow: inset 3px 0 0 #f92672;
+    border-radius: 6px;
+    padding-left: 6px;
+    margin-left: -6px;
 }
 
 .plan-badge {
@@ -68,6 +70,22 @@ window {
     border-radius: 4px;
     background-color: #49483e;
     color: #a6e22e;
+}
+
+.usage-link {
+    font-size: 10px;
+    color: #f8f8f2;
+    background-color: #33332c;
+    border-radius: 4px;
+    padding: 2px 6px;
+}
+
+.usage-link:visited {
+    color: #f8f8f2;
+}
+
+.usage-link:hover {
+    background-color: #3c3c34;
 }
 
 .quota-bar-container {

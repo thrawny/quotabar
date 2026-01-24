@@ -6,6 +6,10 @@ default:
 mock:
     cargo run -- popup --mock
 
+# Watch and restart mock popup on Rust changes (requires watchexec)
+watch-mock:
+    watchexec -r -w src -w Cargo.toml -e rs -- cargo run -- popup --mock
+
 # Run popup
 popup:
     cargo run -- popup

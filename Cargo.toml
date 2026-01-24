@@ -41,6 +41,8 @@ anyhow = "1"
 # Directories
 dirs = "6"
 base64 = "0.22"
+notify = "6"
+resvg = "0.43"
 
 [dev-dependencies]
 pretty_assertions = "1"

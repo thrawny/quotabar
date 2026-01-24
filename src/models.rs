@@ -26,6 +26,14 @@ impl Provider {
             Provider::OpenCode => "󰘦",
         }
     }
+
+    pub fn usage_url(&self) -> Option<&'static str> {
+        match self {
+            Provider::Claude => Some("https://claude.ai/settings/usage"),
+            Provider::Codex => Some("https://chatgpt.com/codex/settings/usage"),
+            Provider::OpenCode => Some("https://opencode.ai"),
+        }
+    }
 }
 
 /// A single rate window representing quota usage

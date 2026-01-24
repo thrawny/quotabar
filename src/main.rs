@@ -186,6 +186,7 @@ fn build_waybar_output(
     snapshots: &HashMap<Provider, UsageSnapshot>,
     selected_provider: Option<Provider>,
 ) -> WaybarOutput {
+    let icon = "󰧑";
     let snapshot = selected_provider
         .and_then(|provider| snapshots.get(&provider))
         .or_else(|| snapshots.get(&Provider::Claude))
@@ -193,7 +194,7 @@ fn build_waybar_output(
         .or_else(|| snapshots.get(&Provider::OpenCode));
     let Some(snapshot) = snapshot else {
         return WaybarOutput {
-            text: "󰧑 --".to_string(),
+            text: format!("{} --", icon),
             tooltip: "No data available".to_string(),
             class: vec!["error".to_string()],
         };
@@ -204,10 +205,10 @@ fn build_waybar_output(
 
     // Build text: "󰧑 31% / 51%" (session / week)
     let text = match (session, week) {
-        (Some(s), Some(w)) => format!("{} {:.0}% / {:.0}%", snapshot.provider.icon(), s, w),
-        (Some(s), None) => format!("{} {:.0}%", snapshot.provider.icon(), s),
-        (None, Some(w)) => format!("{} {:.0}%", snapshot.provider.icon(), w),
-        (None, None) => format!("{} --", snapshot.provider.icon()),
+        (Some(s), Some(w)) => format!("{} {:.0}% / {:.0}%", icon, s, w),
+        (Some(s), None) => format!("{} {:.0}%", icon, s),
+        (None, Some(w)) => format!("{} {:.0}%", icon, w),
+        (None, None) => format!("{} --", icon),
     };
 
     // Build tooltip with more detail

@@ -4,15 +4,19 @@ use crate::mock::mock_snapshots;
 use crate::models::{Provider, UsageSnapshot};
 use anyhow::Result;
 use gtk4::gdk::Display;
+use gtk4::gdk_pixbuf::{Colorspace, Pixbuf};
 use gtk4::prelude::*;
 use gtk4::{
-    Align, Application, ApplicationWindow, Box as GtkBox, CssProvider, Label, Orientation,
-    ProgressBar,
+    Align, Application, ApplicationWindow, Box as GtkBox, CssProvider, Image, Label, LinkButton,
+    Orientation, ProgressBar,
 };
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::time::Duration;
 
 const APP_ID: &str = "com.quotabar.popup";
 
@@ -39,7 +43,7 @@ pub fn run(use_mock: bool) -> Result<()> {
                 .unwrap_or_default()
         };
 
-        let window = build_ui(app, snapshots);
+        let window = build_ui(app, snapshots, use_mock);
         *window_state.borrow_mut() = Some(window);
     });
 
@@ -47,7 +51,11 @@ pub fn run(use_mock: bool) -> Result<()> {
     Ok(())
 }
 
-fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) -> ApplicationWindow {
+fn build_ui(
+    app: &Application,
+    snapshots: HashMap<Provider, UsageSnapshot>,
+    use_mock: bool,
+) -> ApplicationWindow {
     let window = ApplicationWindow::builder()
         .application(app)
         .default_width(320)
@@ -69,7 +77,7 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) -> A
     window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::OnDemand);
 
     // Load CSS
-    load_css();
+    let css_watcher = load_css(use_mock);
 
     // Main container
     let main_box = GtkBox::new(Orientation::Vertical, 0);
@@ -166,19 +174,19 @@ fn build_ui(app: &Application, snapshots: HashMap<Provider, UsageSnapshot>) -> A
     });
 
     window.present();
+    if let Some(watcher) = css_watcher {
+        std::mem::forget(watcher);
+    }
     window
 }
 
-fn load_css() {
+fn load_css(use_mock: bool) -> Option<RecommendedWatcher> {
     let provider = CssProvider::new();
+    let css_path = resolve_css_path(use_mock);
 
     // Try user CSS first, fall back to built-in
-    let user_css = dirs::config_dir()
-        .map(|p| p.join("quotabar").join("style.css"))
-        .filter(|p| p.exists());
-
-    if let Some(path) = user_css {
-        provider.load_from_path(&path);
+    if let Some(path) = css_path.as_ref().filter(|p| p.exists()) {
+        provider.load_from_path(path);
     } else {
         provider.load_from_data(include_str!("popup.css"));
     }
@@ -188,6 +196,54 @@ fn load_css() {
         &provider,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+
+    let path = css_path?;
+
+    if !path.exists() {
+        return None;
+    }
+
+    let provider_for_reload = provider.clone();
+    let reload_path = path.clone();
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    gtk4::glib::timeout_add_local(Duration::from_millis(200), move || {
+        let mut changed = false;
+        while rx.try_recv().is_ok() {
+            changed = true;
+        }
+        if changed {
+            provider_for_reload.load_from_path(&reload_path);
+            println!("CSS reloaded");
+        }
+        gtk4::glib::ControlFlow::Continue
+    });
+
+    let mut watcher =
+        match notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+            if result.is_ok() {
+                let _ = tx.send(());
+            }
+        }) {
+            Ok(watcher) => watcher,
+            Err(_) => return None,
+        };
+
+    if watcher
+        .watch(path.as_path(), RecursiveMode::NonRecursive)
+        .is_err()
+    {
+        return None;
+    }
+
+    Some(watcher)
+}
+
+fn resolve_css_path(use_mock: bool) -> Option<PathBuf> {
+    if use_mock {
+        return Some(PathBuf::from("src").join("popup.css"));
+    }
+
+    dirs::config_dir().map(|p| p.join("quotabar").join("style.css"))
 }
 
 fn create_header() -> GtkBox {
@@ -209,25 +265,51 @@ fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
     let header = GtkBox::new(Orientation::Horizontal, 8);
     header.add_css_class("provider-header");
 
-    let icon = Label::new(Some(snapshot.provider.icon()));
-    icon.add_css_class("provider-icon");
-    header.append(&icon);
+    let icon: gtk4::Widget = if let Some(image) = provider_icon(&snapshot.provider) {
+        image.upcast()
+    } else {
+        let label = Label::new(Some(snapshot.provider.icon()));
+        label.add_css_class("provider-icon");
+        label.set_halign(Align::Center);
+        label.set_valign(Align::Center);
+        label.set_yalign(0.5);
+        label.upcast()
+    };
+    let icon_box = GtkBox::new(Orientation::Vertical, 0);
+    icon_box.set_size_request(20, 20);
+    icon_box.set_halign(Align::Center);
+    icon_box.set_valign(Align::Center);
+    icon_box.append(&icon);
+    header.append(&icon_box);
 
     let name = Label::new(Some(snapshot.provider.display_name()));
     name.add_css_class("provider-name");
+    name.set_valign(Align::Center);
+    name.set_yalign(0.5);
     header.append(&name);
+
+    let right_side = GtkBox::new(Orientation::Horizontal, 6);
+    right_side.set_hexpand(true);
+    right_side.set_halign(Align::End);
+    right_side.set_valign(Align::Center);
+
+    if let Some(url) = snapshot.provider.usage_url() {
+        let link = LinkButton::new(url);
+        link.set_label("Usage");
+        link.add_css_class("usage-link");
+        right_side.append(&link);
+    }
 
     // Plan badge if available
     if let Some(ref identity) = snapshot.identity {
         if let Some(ref plan) = identity.plan {
             let badge = Label::new(Some(plan));
             badge.add_css_class("plan-badge");
-            badge.set_hexpand(true);
-            badge.set_halign(Align::End);
-            header.append(&badge);
+            right_side.append(&badge);
         }
     }
 
+    header.append(&right_side);
     section.append(&header);
 
     // Primary quota bar (5-hour session)
@@ -341,4 +423,45 @@ fn create_footer(snapshots: &HashMap<Provider, UsageSnapshot>) -> GtkBox {
     footer.append(&update_label);
 
     footer
+}
+
+fn provider_icon(provider: &Provider) -> Option<Image> {
+    let svg_bytes = match provider {
+        Provider::Claude => include_bytes!("../assets/provider-icon-claude.svg").as_slice(),
+        Provider::Codex => include_bytes!("../assets/provider-icon-codex.svg").as_slice(),
+        Provider::OpenCode => include_bytes!("../assets/provider-icon-opencode.svg").as_slice(),
+    };
+
+    let size = 16;
+    let pixbuf = render_svg_icon(svg_bytes, size)?;
+    let image = Image::from_pixbuf(Some(&pixbuf));
+    image.add_css_class("provider-icon");
+    image.set_pixel_size(size);
+    Some(image)
+}
+
+fn render_svg_icon(svg_bytes: &[u8], size: i32) -> Option<Pixbuf> {
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(svg_bytes, &options).ok()?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(size as u32, size as u32)?;
+    let view = tree.size();
+    let scale = (size as f32 / view.width()).min(size as f32 / view.height());
+    let scaled_w = view.width() * scale;
+    let scaled_h = view.height() * scale;
+    let tx = (size as f32 - scaled_w) / 2.0;
+    let ty = (size as f32 - scaled_h) / 2.0;
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty);
+    let mut pixmap_mut = pixmap.as_mut();
+    resvg::render(&tree, transform, &mut pixmap_mut);
+    let data = pixmap.take();
+    let row_stride = size * 4;
+    Some(Pixbuf::from_mut_slice(
+        data,
+        Colorspace::Rgb,
+        true,
+        8,
+        size,
+        size,
+        row_stride,
+    ))
 }
