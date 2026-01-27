@@ -4,6 +4,8 @@ Monitor API quota/usage for AI coding tools in Waybar.
 
 A Linux port of [CodexBar](https://github.com/steipete/CodexBar) for Wayland compositors.
 
+![Screenshot](docs/screenshot.png)
+
 ## Supported Providers
 
 - Claude (Anthropic)
