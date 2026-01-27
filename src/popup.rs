@@ -83,17 +83,6 @@ fn build_ui(
     let main_box = GtkBox::new(Orientation::Vertical, 0);
     main_box.add_css_class("popup-container");
 
-    // Header
-    let header = create_header();
-    header.add_css_class("clickable");
-    let window_clone = window.clone();
-    let header_click = gtk4::GestureClick::new();
-    header_click.connect_released(move |_, _, _, _| {
-        window_clone.close();
-    });
-    header.add_controller(header_click);
-    main_box.append(&header);
-
     let selected_provider = Config::load()
         .ok()
         .and_then(|config| config.general.selected_provider);
@@ -244,17 +233,6 @@ fn resolve_css_path(use_mock: bool) -> Option<PathBuf> {
     }
 
     dirs::config_dir().map(|p| p.join("quotabar").join("style.css"))
-}
-
-fn create_header() -> GtkBox {
-    let header = GtkBox::new(Orientation::Horizontal, 8);
-    header.add_css_class("header");
-
-    let title = Label::new(Some("Quota Status"));
-    title.add_css_class("header-title");
-    header.append(&title);
-
-    header
 }
 
 fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
