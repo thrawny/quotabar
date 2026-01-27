@@ -405,13 +405,14 @@ fn create_footer(snapshots: &HashMap<Provider, UsageSnapshot>) -> GtkBox {
 
 fn provider_icon(provider: &Provider) -> Option<Image> {
     let svg_bytes = match provider {
-        Provider::Claude => include_bytes!("../assets/provider-icon-claude.svg").as_slice(),
-        Provider::Codex => include_bytes!("../assets/provider-icon-codex.svg").as_slice(),
-        Provider::OpenCode => include_bytes!("../assets/provider-icon-opencode.svg").as_slice(),
+        Provider::Claude => include_bytes!("../assets/claude.svg").as_slice(),
+        Provider::Codex => include_bytes!("../assets/openai.svg").as_slice(),
+        Provider::OpenCode => include_bytes!("../assets/opencode-logo-dark.svg").as_slice(),
     };
 
+    let svg_string = String::from_utf8_lossy(svg_bytes).replace("currentColor", "white");
     let size = 16;
-    let pixbuf = render_svg_icon(svg_bytes, size)?;
+    let pixbuf = render_svg_icon(svg_string.as_bytes(), size)?;
     let image = Image::from_pixbuf(Some(&pixbuf));
     image.add_css_class("provider-icon");
     image.set_pixel_size(size);
