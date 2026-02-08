@@ -82,8 +82,8 @@ struct RateWindowResponse {
 #[derive(Debug, Deserialize)]
 struct ExtraUsageResponse {
     is_enabled: bool,
-    monthly_limit: Option<i64>,
-    used_credits: Option<i64>,
+    monthly_limit: Option<f64>,
+    used_credits: Option<f64>,
     #[allow(dead_code)]
     utilization: Option<f64>,
     currency: Option<String>,
@@ -225,8 +225,8 @@ impl ProviderFetcher for ClaudeProvider {
             if !e.is_enabled {
                 return None;
             }
-            let mut used = e.used_credits.unwrap_or(0) as f64 / 100.0;
-            let mut limit = e.monthly_limit.unwrap_or(0) as f64 / 100.0;
+            let mut used = e.used_credits.unwrap_or(0.0) / 100.0;
+            let mut limit = e.monthly_limit.unwrap_or(0.0) / 100.0;
 
             // Rescale heuristic for non-enterprise plans
             let is_enterprise = creds
