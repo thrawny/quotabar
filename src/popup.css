@@ -146,6 +146,23 @@ window {
     color: #f8f8f2;
 }
 
+.pace-info {
+    font-size: 11px;
+    margin-top: 2px;
+}
+
+.pace-deficit {
+    color: #f92672;
+}
+
+.pace-reserve {
+    color: #a6e22e;
+}
+
+.pace-ontrack {
+    color: #75715e;
+}
+
 .footer {
     padding-top: 12px;
     margin-top: 8px;

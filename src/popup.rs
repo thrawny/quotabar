@@ -2,7 +2,9 @@ use crate::cache::CacheState;
 use crate::config::Config;
 use crate::mock::mock_snapshots;
 use crate::models::{Provider, UsageSnapshot};
+use crate::pace::{self, UsagePace};
 use anyhow::Result;
+use chrono::Utc;
 use gtk4::gdk::Display;
 use gtk4::gdk_pixbuf::{Colorspace, Pixbuf};
 use gtk4::prelude::*;
@@ -292,31 +294,20 @@ fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
 
     // Primary quota bar (5-hour session)
     if let Some(ref primary) = snapshot.primary {
-        let bar = create_quota_bar(
-            "Current session",
-            primary.used_percent,
-            primary.reset_description.as_deref(),
-        );
+        let bar = create_quota_bar("Current session", primary, None);
         section.append(&bar);
     }
 
     // Secondary quota bar (7-day all models)
     if let Some(ref secondary) = snapshot.secondary {
-        let bar = create_quota_bar(
-            "Current week (all models)",
-            secondary.used_percent,
-            secondary.reset_description.as_deref(),
-        );
+        let pace = pace::compute_pace(snapshot.provider, secondary, Utc::now());
+        let bar = create_quota_bar("Current week (all models)", secondary, pace.as_ref());
         section.append(&bar);
     }
 
     // Tertiary quota bar (7-day model-specific)
     if let Some(ref tertiary) = snapshot.tertiary {
-        let bar = create_quota_bar(
-            "Current week (Sonnet only)",
-            tertiary.used_percent,
-            tertiary.reset_description.as_deref(),
-        );
+        let bar = create_quota_bar("Current week (Sonnet only)", tertiary, None);
         section.append(&bar);
     }
 
@@ -340,16 +331,21 @@ fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
     section
 }
 
-fn create_quota_bar(label: &str, used_percent: f64, reset: Option<&str>) -> GtkBox {
+fn create_quota_bar(
+    label: &str,
+    window: &crate::models::RateWindow,
+    pace: Option<&UsagePace>,
+) -> GtkBox {
     let container = GtkBox::new(Orientation::Vertical, 4);
     container.add_css_class("quota-bar-container");
+
+    let used_percent = window.used_percent;
 
     // Progress bar (shows used percentage)
     let bar = ProgressBar::new();
     bar.set_fraction(used_percent / 100.0);
     bar.add_css_class("quota-bar");
 
-    // Add status class based on usage
     if used_percent >= 90.0 {
         bar.add_css_class("critical");
     } else if used_percent >= 75.0 {
@@ -374,11 +370,42 @@ fn create_quota_bar(label: &str, used_percent: f64, reset: Option<&str>) -> GtkB
     container.append(&label_row);
 
     // Reset time
-    if let Some(reset_text) = reset {
+    if let Some(reset_text) = window.reset_description.as_deref() {
         let reset_label = Label::new(Some(&format!("Resets {}", reset_text)));
         reset_label.add_css_class("reset-time");
         reset_label.set_halign(Align::Start);
         container.append(&reset_label);
+    }
+
+    // Pace info row
+    if let Some(pace) = pace {
+        let left = pace::format_pace_left(pace);
+        let right = pace::format_pace_right(pace);
+
+        let pace_text = match right {
+            Some(ref r) => format!("{} · {}", left, r),
+            None => left,
+        };
+
+        let pace_label = Label::new(Some(&pace_text));
+        pace_label.add_css_class("pace-info");
+        pace_label.set_halign(Align::Start);
+
+        match pace.stage {
+            pace::PaceStage::SlightlyAhead | pace::PaceStage::Ahead | pace::PaceStage::FarAhead => {
+                pace_label.add_css_class("pace-deficit");
+            }
+            pace::PaceStage::SlightlyBehind
+            | pace::PaceStage::Behind
+            | pace::PaceStage::FarBehind => {
+                pace_label.add_css_class("pace-reserve");
+            }
+            pace::PaceStage::OnTrack => {
+                pace_label.add_css_class("pace-ontrack");
+            }
+        }
+
+        container.append(&pace_label);
     }
 
     container

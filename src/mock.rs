@@ -19,7 +19,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
             }),
             secondary: Some(RateWindow {
                 used_percent: 45.0,
-                window_minutes: None,
+                window_minutes: Some(10080),
                 resets_at: Some(now + Duration::days(3)),
                 reset_description: Some("in 3 days".to_string()),
             }),

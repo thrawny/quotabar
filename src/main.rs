@@ -16,6 +16,7 @@ mod cache;
 mod config;
 mod mock;
 mod models;
+mod pace;
 mod popup;
 mod providers;
 
@@ -221,11 +222,20 @@ fn build_waybar_output(
         ));
     }
     if let Some(ref secondary) = snapshot.secondary {
-        tooltip_parts.push(format!(
+        let mut week_line = format!(
             "Week: {:.0}% (resets {})",
             secondary.used_percent,
             secondary.reset_description.as_deref().unwrap_or("--")
-        ));
+        );
+        if let Some(p) = pace::compute_pace(snapshot.provider, secondary, Utc::now()) {
+            let left = pace::format_pace_left(&p);
+            if let Some(right) = pace::format_pace_right(&p) {
+                week_line.push_str(&format!(" · {} · {}", left, right));
+            } else {
+                week_line.push_str(&format!(" · {}", left));
+            }
+        }
+        tooltip_parts.push(week_line);
     }
 
     // Class based on highest usage
