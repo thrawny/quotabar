@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const API_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const USER_AGENT: &str = "quotabar";
@@ -128,38 +129,57 @@ impl ClaudeProvider {
     }
 
     async fn fetch_usage(&self, token: &str) -> Result<UsageResponse> {
-        let response = self
-            .client
-            .get(API_URL)
-            .header("Authorization", format!("Bearer {}", token))
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .header("anthropic-beta", "oauth-2025-04-20")
-            .header("User-Agent", USER_AGENT)
-            .send()
-            .await
-            .context("Failed to connect to Anthropic API")?;
+        let max_retries = 3;
+        let mut last_err = None;
 
-        let status = response.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(anyhow!(
-                "Claude OAuth token expired or invalid. Run `claude login` to refresh."
-            ));
-        }
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(anyhow!(
-                "Claude OAuth token missing required scope. Run `claude login` to refresh."
-            ));
-        }
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(anyhow!("Anthropic API error ({}): {}", status, body));
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                let delay = Duration::from_millis(500 * 2u64.pow(attempt as u32 - 1));
+                tokio::time::sleep(delay).await;
+            }
+
+            let response = self
+                .client
+                .get(API_URL)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("anthropic-beta", "oauth-2025-04-20")
+                .header("User-Agent", USER_AGENT)
+                .send()
+                .await
+                .context("Failed to connect to Anthropic API")?;
+
+            let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                return Err(anyhow!(
+                    "Claude OAuth token expired or invalid. Run `claude login` to refresh."
+                ));
+            }
+            if status == reqwest::StatusCode::FORBIDDEN {
+                return Err(anyhow!(
+                    "Claude OAuth token missing required scope. Run `claude login` to refresh."
+                ));
+            }
+            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                last_err = Some(anyhow!(
+                    "Anthropic API rate limited (429). The /api/oauth/usage endpoint may be \
+                     temporarily unavailable."
+                ));
+                continue;
+            }
+            if !status.is_success() {
+                let body = response.text().await.unwrap_or_default();
+                return Err(anyhow!("Anthropic API error ({}): {}", status, body));
+            }
+
+            return response
+                .json()
+                .await
+                .context("Failed to parse usage response");
         }
 
-        response
-            .json()
-            .await
-            .context("Failed to parse usage response")
+        Err(last_err.unwrap_or_else(|| anyhow!("Failed to fetch usage after retries")))
     }
 }
 
@@ -260,6 +280,7 @@ impl ProviderFetcher for ClaudeProvider {
                 organization: None,
             }),
             updated_at: now,
+            stale: false,
         })
     }
 

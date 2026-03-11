@@ -341,6 +341,7 @@ impl ProviderFetcher for CodexProvider {
             cost: None,
             identity: Self::resolve_identity(&creds, &usage),
             updated_at: now,
+            stale: false,
         })
     }
 

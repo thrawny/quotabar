@@ -37,6 +37,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
                 organization: None,
             }),
             updated_at: now,
+            stale: false,
         },
     );
 
@@ -60,6 +61,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
                 organization: Some("Personal".to_string()),
             }),
             updated_at: now,
+            stale: false,
         },
     );
 
@@ -88,6 +90,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
                 organization: None,
             }),
             updated_at: now,
+            stale: false,
         },
     );
 

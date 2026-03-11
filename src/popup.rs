@@ -412,8 +412,17 @@ fn create_quota_bar(
 }
 
 fn create_footer(snapshots: &HashMap<Provider, UsageSnapshot>) -> GtkBox {
-    let footer = GtkBox::new(Orientation::Horizontal, 8);
+    let footer = GtkBox::new(Orientation::Vertical, 4);
     footer.add_css_class("footer");
+
+    let any_stale = snapshots.values().any(|s| s.stale);
+
+    if any_stale {
+        let stale_label = Label::new(Some("API unavailable - showing cached data"));
+        stale_label.add_css_class("footer-text");
+        stale_label.add_css_class("stale-warning");
+        footer.append(&stale_label);
+    }
 
     // Find most recent update time (convert to local)
     let last_update = snapshots

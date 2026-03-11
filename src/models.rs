@@ -117,6 +117,9 @@ pub struct UsageSnapshot {
     pub identity: Option<IdentitySnapshot>,
     /// When this snapshot was captured
     pub updated_at: DateTime<Utc>,
+    /// Whether this snapshot is from cache (API was unavailable)
+    #[serde(default)]
+    pub stale: bool,
 }
 
 impl UsageSnapshot {

@@ -173,3 +173,7 @@ window {
     font-size: 11px;
     color: #75715e;
 }
+
+.stale-warning {
+    color: #e6db74;
+}

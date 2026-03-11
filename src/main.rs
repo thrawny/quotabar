@@ -69,11 +69,11 @@ async fn main() -> Result<()> {
         Commands::Fetch => {
             let mut snapshots = HashMap::new();
 
-            match fetch_claude().await {
-                Ok(s) => {
-                    snapshots.insert(Provider::Claude, s);
+            if let Some(s) = fetch_claude_with_fallback().await {
+                if s.stale {
+                    eprintln!("Claude: using stale cached data (API unavailable)");
                 }
-                Err(e) => eprintln!("Failed to fetch Claude: {}", e),
+                snapshots.insert(Provider::Claude, s);
             }
 
             match fetch_codex().await {
@@ -100,6 +100,28 @@ async fn main() -> Result<()> {
 async fn fetch_claude() -> Result<models::UsageSnapshot> {
     let provider = ClaudeProvider::new();
     provider.fetch().await
+}
+
+/// Fetch Claude data with fallback to cached snapshot on failure.
+/// Returns the snapshot and whether it's stale (from cache).
+async fn fetch_claude_with_fallback() -> Option<models::UsageSnapshot> {
+    match fetch_claude().await {
+        Ok(snapshot) => Some(snapshot),
+        Err(e) => {
+            eprintln!("Claude fetch failed: {}. Trying cache fallback.", e);
+            let cached = CacheState::load()
+                .ok()
+                .flatten()
+                .and_then(|c| c.snapshots.get(&Provider::Claude).cloned());
+            if let Some(mut snapshot) = cached {
+                snapshot.stale = true;
+                Some(snapshot)
+            } else {
+                eprintln!("No cached Claude data available.");
+                None
+            }
+        }
+    }
 }
 
 async fn fetch_codex() -> Result<models::UsageSnapshot> {
@@ -163,7 +185,7 @@ async fn waybar_output() -> WaybarOutput {
     let mut snapshots = HashMap::new();
     let config = Config::load().unwrap_or_default();
 
-    if let Ok(snapshot) = fetch_claude().await {
+    if let Some(snapshot) = fetch_claude_with_fallback().await {
         snapshots.insert(Provider::Claude, snapshot);
     }
     if let Ok(snapshot) = fetch_codex().await {
@@ -214,6 +236,9 @@ fn build_waybar_output(
 
     // Build tooltip with more detail
     let mut tooltip_parts = vec![snapshot.provider.display_name().to_string()];
+    if snapshot.stale {
+        tooltip_parts.push("(cached - API unavailable)".to_string());
+    }
     if let Some(ref primary) = snapshot.primary {
         tooltip_parts.push(format!(
             "Session: {:.0}% (resets {})",
