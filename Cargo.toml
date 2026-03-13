@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "sync", "process", "time"] }
 
 # GUI
 gtk4 = "0.10"

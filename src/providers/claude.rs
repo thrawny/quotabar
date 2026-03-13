@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::process::Stdio;
 
 const API_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const USER_AGENT: &str = "quotabar";
@@ -161,17 +162,8 @@ impl ClaudeProvider {
             .await
             .context("Failed to parse usage response")
     }
-}
 
-impl Default for ClaudeProvider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait]
-impl ProviderFetcher for ClaudeProvider {
-    async fn fetch(&self) -> Result<UsageSnapshot> {
+    async fn fetch_via_api(&self) -> Result<UsageSnapshot> {
         let creds = Self::load_credentials()?;
 
         if creds.is_expired() {
@@ -263,10 +255,266 @@ impl ProviderFetcher for ClaudeProvider {
         })
     }
 
+    async fn fetch_via_cli(&self) -> Result<UsageSnapshot> {
+        let raw = Self::run_cli_usage().await?;
+        let usage = parse_cli_usage(&raw)?;
+        let plan = Self::load_credentials().ok().and_then(|c| c.plan_name());
+        let now = Utc::now();
+
+        Ok(UsageSnapshot {
+            provider: Provider::Claude,
+            primary: usage.session.map(|w| RateWindow {
+                used_percent: w.used_percent,
+                window_minutes: Some(300),
+                resets_at: None,
+                reset_description: w.reset_description,
+            }),
+            secondary: usage.weekly.map(|w| RateWindow {
+                used_percent: w.used_percent,
+                window_minutes: Some(10080),
+                resets_at: None,
+                reset_description: w.reset_description,
+            }),
+            tertiary: usage.model.map(|w| RateWindow {
+                used_percent: w.used_percent,
+                window_minutes: Some(10080),
+                resets_at: None,
+                reset_description: w.reset_description,
+            }),
+            cost: None,
+            identity: Some(IdentitySnapshot {
+                email: None,
+                plan,
+                organization: None,
+            }),
+            updated_at: now,
+        })
+    }
+
+    async fn run_cli_usage() -> Result<String> {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            tokio::process::Command::new("timeout")
+                .args([
+                    "15",
+                    "script",
+                    "-qfc",
+                    r#"printf "/usage\n" | claude --allowed-tools """#,
+                    "/dev/null",
+                ])
+                .env_remove("CLAUDECODE")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .map_err(|_| anyhow!("CLI usage probe timed out"))?
+        .context("Failed to execute claude CLI")?;
+
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+impl Default for ClaudeProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl ProviderFetcher for ClaudeProvider {
+    async fn fetch(&self) -> Result<UsageSnapshot> {
+        match self.fetch_via_api().await {
+            Ok(snapshot) => Ok(snapshot),
+            Err(api_err) => {
+                eprintln!("Claude API failed ({}), trying CLI fallback...", api_err);
+                self.fetch_via_cli().await.map_err(|cli_err| {
+                    anyhow!("{}\nCLI fallback also failed: {}", api_err, cli_err)
+                })
+            }
+        }
+    }
+
     fn name(&self) -> &'static str {
         "Claude"
     }
 }
+
+// --- CLI output parsing ---
+
+struct CliWindow {
+    used_percent: f64,
+    reset_description: Option<String>,
+}
+
+struct CliUsage {
+    session: Option<CliWindow>,
+    weekly: Option<CliWindow>,
+    model: Option<CliWindow>,
+}
+
+/// Strip ANSI escape sequences (CSI and OSC) from terminal output.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            match chars.peek() {
+                Some(&'[') => {
+                    chars.next();
+                    // CSI sequence: skip params until final byte (letter, @, ~)
+                    let mut final_byte = None;
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() || c == '@' || c == '~' {
+                            final_byte = Some(c);
+                            break;
+                        }
+                    }
+                    // Cursor movement (C = right, B = down) → emit space
+                    if final_byte == Some('C') || final_byte == Some('B') {
+                        result.push(' ');
+                    }
+                }
+                Some(&']') => {
+                    chars.next();
+                    // OSC sequence: skip until BEL or ST (ESC \)
+                    let mut prev = '\0';
+                    for c in chars.by_ref() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if prev == '\x1b' && c == '\\' {
+                            break;
+                        }
+                        prev = c;
+                    }
+                }
+                _ => {
+                    chars.next();
+                }
+            }
+        } else if c == '\r' {
+            // skip carriage return
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Normalize text for label matching: lowercase and strip all whitespace.
+fn normalize(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// Isolate the usage panel by finding the last "Settings:" header.
+/// This avoids matching percentages from the status bar.
+fn trim_to_usage_panel(text: &str) -> &str {
+    let lower = text.to_lowercase();
+    if let Some(pos) = lower.rfind("settings:") {
+        let tail = &text[pos..];
+        let lower_tail = &lower[pos..];
+        if lower_tail.contains("usage") && tail.contains('%') {
+            return tail;
+        }
+    }
+    text
+}
+
+/// Parse the stripped CLI /usage output into usage windows.
+fn parse_cli_usage(raw: &str) -> Result<CliUsage> {
+    let clean = strip_ansi(raw);
+    let panel = trim_to_usage_panel(&clean);
+    let lines: Vec<&str> = panel.lines().collect();
+
+    let session = extract_cli_window(&lines, &["Current session"]);
+    let weekly = extract_cli_window(&lines, &["Current week (all models)"]);
+    let model = extract_cli_window(
+        &lines,
+        &[
+            "Current week (Sonnet only)",
+            "Current week (Sonnet)",
+            "Current week (Opus)",
+        ],
+    );
+
+    if session.is_none() {
+        return Err(anyhow!(
+            "Could not parse CLI usage output: 'Current session' not found"
+        ));
+    }
+
+    Ok(CliUsage {
+        session,
+        weekly,
+        model,
+    })
+}
+
+/// Find a labeled section and extract its percentage and reset text.
+fn extract_cli_window(lines: &[&str], labels: &[&str]) -> Option<CliWindow> {
+    // Find the last line matching any label (normalized matching for robustness)
+    let label_idx = labels.iter().find_map(|label| {
+        let normalized_label = normalize(label);
+        lines
+            .iter()
+            .rposition(|line| normalize(line).contains(&normalized_label))
+    })?;
+
+    let mut used_percent = None;
+    let mut reset_description = None;
+
+    // Scan up to 10 lines after the label for percentage and reset info
+    for line in lines.iter().skip(label_idx).take(10) {
+        if used_percent.is_none() {
+            used_percent = extract_percent(line);
+        }
+        if reset_description.is_none() && normalize(line).contains("reset") {
+            reset_description = Some(line.trim().to_string());
+        }
+        // Stop at the next section label
+        if used_percent.is_some() {
+            let norm = normalize(line);
+            if norm.contains("currentweek") || norm.contains("extrausage") {
+                break;
+            }
+        }
+    }
+
+    Some(CliWindow {
+        used_percent: used_percent?,
+        reset_description,
+    })
+}
+
+/// Extract a percentage (0-100) from a line containing "N%".
+fn extract_percent(line: &str) -> Option<f64> {
+    let chars: Vec<char> = line.chars().collect();
+    for (i, &c) in chars.iter().enumerate() {
+        if c == '%' {
+            // Walk backwards to collect the number
+            let mut j = i;
+            while j > 0 && (chars[j - 1].is_ascii_digit() || chars[j - 1] == '.') {
+                j -= 1;
+            }
+            if j < i {
+                let num_str: String = chars[j..i].iter().collect();
+                if let Ok(n) = num_str.parse::<f64>() {
+                    if (0.0..=100.0).contains(&n) {
+                        return Some(n);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// --- Existing parsing helpers ---
 
 fn parse_iso8601(s: &str) -> Option<DateTime<Utc>> {
     // Try with fractional seconds first, then without
@@ -325,5 +573,78 @@ mod tests {
 
         let reset = now + chrono::Duration::days(3);
         assert_eq!(format_reset_time(reset, now), "in 3 days");
+    }
+
+    #[test]
+    fn test_strip_ansi() {
+        assert_eq!(strip_ansi("\x1b[1mhello\x1b[0m"), "hello");
+        assert_eq!(strip_ansi("\x1b[38;2;255;0;0mred\x1b[39m"), "red");
+        assert_eq!(strip_ansi("no ansi here"), "no ansi here");
+        assert_eq!(strip_ansi("line\rone"), "lineone");
+        // Cursor right (CSI C) becomes space
+        assert_eq!(strip_ansi("hello\x1b[1Cworld"), "hello world");
+    }
+
+    #[test]
+    fn test_extract_percent() {
+        assert_eq!(extract_percent("11% used"), Some(11.0));
+        assert_eq!(extract_percent("11%used"), Some(11.0));
+        assert_eq!(extract_percent("████░░░░ 85% used"), Some(85.0));
+        assert_eq!(extract_percent("no percentage here"), None);
+        assert_eq!(extract_percent("200% is too high"), None);
+    }
+
+    #[test]
+    fn test_parse_cli_usage_clean() {
+        let input = "\
+Settings: Status Config  Usage  (tab to cycle)
+
+  Current session
+  ██████░░░░░░  11% used
+  Resets 1pm
+
+  Current week (all models)
+  █░░░░░░░░░░░  1% used
+  Resets Mar 20, 8am
+
+  Current week (Sonnet only)
+  █░░░░░░░░░░░  2% used
+  Resets Mar 19, 10am
+";
+        let result = parse_cli_usage(input).unwrap();
+        assert_eq!(result.session.as_ref().unwrap().used_percent, 11.0);
+        assert_eq!(result.weekly.as_ref().unwrap().used_percent, 1.0);
+        assert_eq!(result.model.as_ref().unwrap().used_percent, 2.0);
+    }
+
+    #[test]
+    fn test_parse_cli_usage_with_ansi() {
+        // Simulates ANSI-laden output where CSI sequences separate words
+        let input =
+            "\x1b[1mSettings:\x1b[22m Status Config \x1b[48;2;153;204;255m Usage \x1b[49m\n\n\
+            \x1b[1mCurrent session\x1b[22m\n\
+            \x1b[48;2;69;92;115m████░░░░\x1b[49m11%\x1b[1Cused\n\
+            \x1b[38;2;153;153;153mResets 1pm\x1b[39m\n\n\
+            \x1b[1mCurrent\x1b[1Cweek\x1b[1C(all\x1b[1Cmodels)\x1b[22m\n\
+            \x1b[48;2;69;92;115m█░░░░\x1b[49m1%\x1b[1Cused\n\
+            \x1b[38;2;153;153;153mResets Mar 20\x1b[39m\n";
+        let result = parse_cli_usage(input).unwrap();
+        assert_eq!(result.session.as_ref().unwrap().used_percent, 11.0);
+        assert_eq!(result.weekly.as_ref().unwrap().used_percent, 1.0);
+    }
+
+    #[test]
+    fn test_parse_cli_usage_missing_session() {
+        let input = "Some random output without usage data\n";
+        assert!(parse_cli_usage(input).is_err());
+    }
+
+    #[test]
+    fn test_normalize() {
+        assert_eq!(
+            normalize("Current week (all models)"),
+            "currentweek(allmodels)"
+        );
+        assert_eq!(normalize("  Hello World  "), "helloworld");
     }
 }

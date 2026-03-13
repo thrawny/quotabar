@@ -20,6 +20,8 @@ mod pace;
 mod popup;
 mod providers;
 
+const MIN_FETCH_INTERVAL_SECS: i64 = 300; // 5 minutes
+
 #[derive(Parser)]
 #[command(name = "quotabar")]
 #[command(about = "Monitor API quota/usage for AI coding tools")]
@@ -167,10 +169,19 @@ struct WaybarOutput {
 }
 
 async fn waybar_output() -> WaybarOutput {
-    // Fetch from all providers (currently Claude + Codex)
+    let config = Config::load().unwrap_or_default();
+
+    // Serve from cache if fresh enough
+    if let Some(cached) = CacheState::load().ok().flatten() {
+        let age = Utc::now().signed_duration_since(cached.updated_at);
+        if age.num_seconds() < MIN_FETCH_INTERVAL_SECS {
+            return build_waybar_output(&cached.snapshots, config.general.selected_provider);
+        }
+    }
+
+    // Cache is stale or missing, fetch fresh data
     let mut snapshots = HashMap::new();
     let mut errors = HashMap::new();
-    let config = Config::load().unwrap_or_default();
 
     match fetch_claude().await {
         Ok(snapshot) => {
