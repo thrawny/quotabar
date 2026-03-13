@@ -68,29 +68,37 @@ async fn main() -> Result<()> {
         }
         Commands::Fetch => {
             let mut snapshots = HashMap::new();
+            let mut errors = HashMap::new();
 
             match fetch_claude().await {
                 Ok(s) => {
                     snapshots.insert(Provider::Claude, s);
                 }
-                Err(e) => eprintln!("Failed to fetch Claude: {}", e),
+                Err(e) => {
+                    cache::append_log(&format!("Claude fetch error: {}", e));
+                    eprintln!("Failed to fetch Claude: {}", e);
+                    errors.insert(Provider::Claude, e.to_string());
+                }
             }
 
             match fetch_codex().await {
                 Ok(s) => {
                     snapshots.insert(Provider::Codex, s);
                 }
-                Err(e) => eprintln!("Failed to fetch Codex: {}", e),
+                Err(e) => {
+                    cache::append_log(&format!("Codex fetch error: {}", e));
+                    eprintln!("Failed to fetch Codex: {}", e);
+                    errors.insert(Provider::Codex, e.to_string());
+                }
             }
 
-            if !snapshots.is_empty() {
-                let state = CacheState {
-                    snapshots,
-                    updated_at: Utc::now(),
-                };
-                state.save()?;
-                println!("Cache updated at {}", CacheState::cache_path().display());
-            }
+            let state = CacheState {
+                snapshots,
+                errors,
+                updated_at: Utc::now(),
+            };
+            state.save()?;
+            println!("Cache updated at {}", CacheState::cache_path().display());
         }
     }
 
@@ -161,23 +169,35 @@ struct WaybarOutput {
 async fn waybar_output() -> WaybarOutput {
     // Fetch from all providers (currently Claude + Codex)
     let mut snapshots = HashMap::new();
+    let mut errors = HashMap::new();
     let config = Config::load().unwrap_or_default();
 
-    if let Ok(snapshot) = fetch_claude().await {
-        snapshots.insert(Provider::Claude, snapshot);
+    match fetch_claude().await {
+        Ok(snapshot) => {
+            snapshots.insert(Provider::Claude, snapshot);
+        }
+        Err(e) => {
+            cache::append_log(&format!("Claude fetch error: {}", e));
+            errors.insert(Provider::Claude, e.to_string());
+        }
     }
-    if let Ok(snapshot) = fetch_codex().await {
-        snapshots.insert(Provider::Codex, snapshot);
+    match fetch_codex().await {
+        Ok(snapshot) => {
+            snapshots.insert(Provider::Codex, snapshot);
+        }
+        Err(e) => {
+            cache::append_log(&format!("Codex fetch error: {}", e));
+            errors.insert(Provider::Codex, e.to_string());
+        }
     }
 
     // Save to cache
-    if !snapshots.is_empty() {
-        let state = CacheState {
-            snapshots: snapshots.clone(),
-            updated_at: Utc::now(),
-        };
-        let _ = state.save();
-    }
+    let state = CacheState {
+        snapshots: snapshots.clone(),
+        errors,
+        updated_at: Utc::now(),
+    };
+    let _ = state.save();
 
     // Build output from snapshots
     build_waybar_output(&snapshots, config.general.selected_provider)

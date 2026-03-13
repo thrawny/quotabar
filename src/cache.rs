@@ -8,6 +8,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheState {
     pub snapshots: HashMap<Provider, UsageSnapshot>,
+    #[serde(default)]
+    pub errors: HashMap<Provider, String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -48,4 +50,21 @@ impl CacheState {
     pub fn get(&self, provider: Provider) -> Option<&UsageSnapshot> {
         self.snapshots.get(&provider)
     }
+}
+
+pub fn append_log(message: &str) {
+    let log_path = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("quotabar")
+        .join("quotabar.log");
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    let line = format!("[{}] {}\n", timestamp, message);
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
 }

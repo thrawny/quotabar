@@ -35,17 +35,17 @@ pub fn run(use_mock: bool) -> Result<()> {
             }
         }
 
-        let snapshots = if use_mock {
-            mock_snapshots()
+        let (snapshots, errors) = if use_mock {
+            (mock_snapshots(), HashMap::new())
         } else {
             CacheState::load()
                 .ok()
                 .flatten()
-                .map(|c| c.snapshots)
+                .map(|c| (c.snapshots, c.errors))
                 .unwrap_or_default()
         };
 
-        let window = build_ui(app, snapshots, use_mock);
+        let window = build_ui(app, snapshots, errors, use_mock);
         *window_state.borrow_mut() = Some(window);
     });
 
@@ -56,6 +56,7 @@ pub fn run(use_mock: bool) -> Result<()> {
 fn build_ui(
     app: &Application,
     snapshots: HashMap<Provider, UsageSnapshot>,
+    errors: HashMap<Provider, String>,
     use_mock: bool,
 ) -> ApplicationWindow {
     let window = ApplicationWindow::builder()
@@ -128,6 +129,9 @@ fn build_ui(
                 }
             });
             section.add_controller(click_controller);
+            main_box.append(&section);
+        } else if let Some(error) = errors.get(&provider) {
+            let section = create_provider_error_section(&provider, error);
             main_box.append(&section);
         }
     }
@@ -409,6 +413,48 @@ fn create_quota_bar(
     }
 
     container
+}
+
+fn create_provider_error_section(provider: &Provider, error: &str) -> GtkBox {
+    let section = GtkBox::new(Orientation::Vertical, 8);
+    section.add_css_class("provider-section");
+    section.add_css_class("provider-error");
+
+    let header = GtkBox::new(Orientation::Horizontal, 8);
+    header.add_css_class("provider-header");
+
+    let icon: gtk4::Widget = if let Some(image) = provider_icon(provider) {
+        image.upcast()
+    } else {
+        let label = Label::new(Some(provider.icon()));
+        label.add_css_class("provider-icon");
+        label.set_halign(Align::Center);
+        label.set_valign(Align::Center);
+        label.set_yalign(0.5);
+        label.upcast()
+    };
+    let icon_box = GtkBox::new(Orientation::Vertical, 0);
+    icon_box.set_size_request(20, 20);
+    icon_box.set_halign(Align::Center);
+    icon_box.set_valign(Align::Center);
+    icon_box.append(&icon);
+    header.append(&icon_box);
+
+    let name = Label::new(Some(provider.display_name()));
+    name.add_css_class("provider-name");
+    name.set_valign(Align::Center);
+    name.set_yalign(0.5);
+    header.append(&name);
+
+    section.append(&header);
+
+    let error_label = Label::new(Some(error));
+    error_label.add_css_class("error-text");
+    error_label.set_wrap(true);
+    error_label.set_halign(Align::Start);
+    section.append(&error_label);
+
+    section
 }
 
 fn create_footer(snapshots: &HashMap<Provider, UsageSnapshot>) -> GtkBox {
