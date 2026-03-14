@@ -1,19 +1,23 @@
 /* quotabar popup - molokai theme */
 
-window {
+window,
+window.background {
     background-color: transparent;
 }
 
 .popup-container {
     background-color: #1c1c1c;
-    border: 1px solid #49483e;
+    border: 1px solid #555;
     border-radius: 12px;
     padding: 16px;
     min-width: 280px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    transition: border-color 200ms ease, box-shadow 200ms ease;
 }
 
 .popup-container.focused {
     border-color: #f92672;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 12px rgba(249, 38, 114, 0.35);
 }
 
 .header {
@@ -29,21 +33,28 @@ window {
 }
 
 .provider-section {
-    padding: 12px 0;
-    border-bottom: 1px solid #49483e;
+    padding: 12px;
+    margin-bottom: 8px;
+    background-color: #252521;
+    border-radius: 8px;
+    transition: background-color 150ms ease;
+}
+
+.provider-section:hover {
+    background-color: #2e2e28;
+}
+
+.provider-section.selected {
+    background-color: #2a2025;
+    box-shadow: inset 3px 0 0 #f92672;
 }
 
 .provider-section.selected .provider-icon {
     color: #f92672;
 }
 
-.provider-section:last-of-type {
-    border-bottom: none;
-}
-
 .provider-header {
     margin-bottom: 6px;
-    align-items: center;
 }
 
 .provider-icon {
@@ -55,13 +66,6 @@ window {
     font-size: 14px;
     font-weight: 600;
     color: #f8f8f2;
-}
-
-.provider-section.selected .provider-header {
-    box-shadow: inset 3px 0 0 #f92672;
-    border-radius: 6px;
-    padding-left: 6px;
-    margin-left: -6px;
 }
 
 .plan-badge {
@@ -78,6 +82,7 @@ window {
     background-color: #33332c;
     border-radius: 4px;
     padding: 2px 6px;
+    transition: background-color 150ms ease;
 }
 
 .usage-link:visited {
@@ -85,7 +90,7 @@ window {
 }
 
 .usage-link:hover {
-    background-color: #3c3c34;
+    background-color: #49483e;
 }
 
 .quota-bar-container {
@@ -104,20 +109,21 @@ window {
 }
 
 .quota-bar {
-    min-height: 8px;
-    border-radius: 4px;
+    min-height: 10px;
+    border-radius: 5px;
 }
 
 .quota-bar trough {
-    background-color: #49483e;
-    border-radius: 4px;
-    min-height: 8px;
+    background-color: #3a3a34;
+    border-radius: 5px;
+    min-height: 10px;
 }
 
 .quota-bar progress {
     background-color: #a6e22e;
-    border-radius: 4px;
-    min-height: 8px;
+    border-radius: 5px;
+    min-height: 10px;
+    transition: background-color 300ms ease;
 }
 
 .quota-bar.warning progress {
@@ -137,7 +143,7 @@ window {
 .cost-info {
     margin-top: 8px;
     padding: 8px;
-    background-color: #49483e;
+    background-color: #3a3a34;
     border-radius: 6px;
 }
 
@@ -173,9 +179,7 @@ window {
 }
 
 .footer {
-    padding-top: 12px;
-    margin-top: 8px;
-    border-top: 1px solid #49483e;
+    padding-top: 8px;
 }
 
 .footer-text {
