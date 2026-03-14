@@ -23,7 +23,20 @@ install:
     cargo install --path .
 
 # Format, lint, and test
-check:
+check: fmt _clippy-strict test
+
+# Format code
+fmt:
     cargo fmt
-    cargo clippy --fix --allow-dirty -- -D warnings
+
+# Clippy with denied warnings (for CI/check)
+_clippy-strict:
+    cargo clippy -- -D warnings
+
+# Run clippy (auto-fix)
+clippy:
+    cargo clippy --fix --allow-dirty
+
+# Run tests
+test:
     cargo test
