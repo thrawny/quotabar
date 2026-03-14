@@ -1,4 +1,6 @@
-/* quotabar popup - molokai theme */
+/* quotabar popup - base stylesheet
+ * Colors are defined via @define-color in theme files.
+ * Override colors in ~/.config/quotabar/style.css with @define-color. */
 
 window,
 window.background {
@@ -6,8 +8,8 @@ window.background {
 }
 
 .popup-container {
-    background-color: #1c1c1c;
-    border: 1px solid #555;
+    background-color: @bg;
+    border: 1px solid @border;
     border-radius: 12px;
     padding: 16px;
     min-width: 280px;
@@ -16,41 +18,41 @@ window.background {
 }
 
 .popup-container.focused {
-    border-color: #f92672;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 12px rgba(249, 38, 114, 0.35);
+    border-color: @accent;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7), 0 0 12px alpha(@accent, 0.35);
 }
 
 .header {
     padding-bottom: 12px;
-    border-bottom: 1px solid #49483e;
+    border-bottom: 1px solid @bg_elevated;
     margin-bottom: 12px;
 }
 
 .header-title {
     font-size: 14px;
     font-weight: bold;
-    color: #f8f8f2;
+    color: @text;
 }
 
 .provider-section {
     padding: 12px;
     margin-bottom: 8px;
-    background-color: #252521;
+    background-color: @bg_card;
     border-radius: 8px;
     transition: background-color 150ms ease;
 }
 
 .provider-section:hover {
-    background-color: #2e2e28;
+    background-color: @bg_card_hover;
 }
 
 .provider-section.selected {
-    background-color: #2a2025;
-    box-shadow: inset 3px 0 0 #f92672;
+    background-color: @bg_card_selected;
+    box-shadow: inset 3px 0 0 @accent;
 }
 
 .provider-section.selected .provider-icon {
-    color: #f92672;
+    color: @accent;
 }
 
 .provider-header {
@@ -65,32 +67,32 @@ window.background {
 .provider-name {
     font-size: 14px;
     font-weight: 600;
-    color: #f8f8f2;
+    color: @text;
 }
 
 .plan-badge {
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 4px;
-    background-color: #49483e;
-    color: #a6e22e;
+    background-color: @bg_elevated;
+    color: @success;
 }
 
 .usage-link {
     font-size: 10px;
-    color: #f8f8f2;
-    background-color: #33332c;
+    color: @text;
+    background-color: @bg_subtle;
     border-radius: 4px;
     padding: 2px 6px;
     transition: background-color 150ms ease;
 }
 
 .usage-link:visited {
-    color: #f8f8f2;
+    color: @text;
 }
 
 .usage-link:hover {
-    background-color: #49483e;
+    background-color: @bg_elevated;
 }
 
 .quota-bar-container {
@@ -99,13 +101,13 @@ window.background {
 
 .quota-label {
     font-size: 12px;
-    color: #75715e;
+    color: @text_dim;
 }
 
 .quota-percent {
     font-size: 12px;
     font-weight: 600;
-    color: #f8f8f2;
+    color: @text;
 }
 
 .quota-bar {
@@ -114,42 +116,42 @@ window.background {
 }
 
 .quota-bar trough {
-    background-color: #3a3a34;
+    background-color: @bg_surface;
     border-radius: 5px;
     min-height: 10px;
 }
 
 .quota-bar progress {
-    background-color: #a6e22e;
+    background-color: @success;
     border-radius: 5px;
     min-height: 10px;
     transition: background-color 300ms ease;
 }
 
 .quota-bar.warning progress {
-    background-color: #e6db74;
+    background-color: @warning;
 }
 
 .quota-bar.critical progress {
-    background-color: #f92672;
+    background-color: @accent;
 }
 
 .reset-time {
     font-size: 11px;
-    color: #75715e;
+    color: @text_dim;
     margin-top: 2px;
 }
 
 .cost-info {
     margin-top: 8px;
     padding: 8px;
-    background-color: #3a3a34;
+    background-color: @bg_surface;
     border-radius: 6px;
 }
 
 .cost-text {
     font-size: 12px;
-    color: #f8f8f2;
+    color: @text;
 }
 
 .pace-info {
@@ -158,15 +160,15 @@ window.background {
 }
 
 .pace-deficit {
-    color: #f92672;
+    color: @accent;
 }
 
 .pace-reserve {
-    color: #a6e22e;
+    color: @success;
 }
 
 .pace-ontrack {
-    color: #75715e;
+    color: @text_dim;
 }
 
 .provider-error {
@@ -175,7 +177,7 @@ window.background {
 
 .error-text {
     font-size: 11px;
-    color: #f92672;
+    color: @accent;
 }
 
 .footer {
@@ -184,5 +186,5 @@ window.background {
 
 .footer-text {
     font-size: 11px;
-    color: #75715e;
+    color: @text_dim;
 }

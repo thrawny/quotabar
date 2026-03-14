@@ -19,6 +19,7 @@ mod models;
 mod pace;
 mod popup;
 mod providers;
+mod themes;
 
 const MIN_FETCH_INTERVAL_SECS: i64 = 300; // 5 minutes
 

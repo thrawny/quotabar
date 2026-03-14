@@ -20,6 +20,12 @@ pub struct GeneralConfig {
     pub refresh_interval: String,
     #[serde(default)]
     pub selected_provider: Option<Provider>,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "default".to_string()
 }
 
 fn default_refresh_interval() -> String {
@@ -31,6 +37,7 @@ impl Default for GeneralConfig {
         Self {
             refresh_interval: default_refresh_interval(),
             selected_provider: None,
+            theme: default_theme(),
         }
     }
 }

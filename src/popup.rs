@@ -79,16 +79,17 @@ fn build_ui(
     window.set_margin(Edge::Right, 10);
     window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::OnDemand);
 
+    // Load config
+    let config = Config::load().unwrap_or_default();
+
     // Load CSS
-    let css_watcher = load_css(use_mock);
+    let css_watcher = load_css(use_mock, &config.general.theme);
 
     // Main container
     let main_box = GtkBox::new(Orientation::Vertical, 0);
     main_box.add_css_class("popup-container");
 
-    let selected_provider = Config::load()
-        .ok()
-        .and_then(|config| config.general.selected_provider);
+    let selected_provider = config.general.selected_provider;
     let selected_state: Rc<RefCell<Option<Provider>>> = Rc::new(RefCell::new(selected_provider));
     let sections: Rc<RefCell<Vec<(Provider, GtkBox)>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -175,39 +176,57 @@ fn build_ui(
     window
 }
 
-fn load_css(use_mock: bool) -> Option<RecommendedWatcher> {
-    let provider = CssProvider::new();
-    let css_path = resolve_css_path(use_mock);
+fn load_css(use_mock: bool, theme_name: &str) -> Option<RecommendedWatcher> {
+    let display = Display::default().expect("Could not get default display");
+    let theme_css = crate::themes::get(theme_name);
 
-    // Try user CSS first, fall back to built-in
-    if let Some(path) = css_path.as_ref().filter(|p| p.exists()) {
-        provider.load_from_path(path);
+    // Built-in provider: theme colors + base layout
+    let builtin = CssProvider::new();
+    let base_css = if use_mock {
+        std::fs::read_to_string("src/popup.css")
+            .unwrap_or_else(|_| include_str!("popup.css").to_string())
     } else {
-        provider.load_from_data(include_str!("popup.css"));
-    }
+        include_str!("popup.css").to_string()
+    };
+    builtin.load_from_data(&format!("{}\n{}", theme_css, base_css));
 
     gtk4::style_context_add_provider_for_display(
-        &Display::default().expect("Could not get default display"),
-        &provider,
+        &display,
+        &builtin,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
 
-    let path = css_path?;
+    // User overrides (additive, higher priority)
+    let user_path = dirs::config_dir().map(|p| p.join("quotabar").join("style.css"));
+    if let Some(ref path) = user_path {
+        if path.exists() {
+            let user = CssProvider::new();
+            user.load_from_path(path);
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &user,
+                gtk4::STYLE_PROVIDER_PRIORITY_USER,
+            );
+        }
+    }
 
-    if !path.exists() {
+    // Hot-reload in mock mode (watches src/popup.css)
+    if !use_mock {
         return None;
     }
 
-    let provider_for_reload = provider.clone();
-    let reload_path = path.clone();
+    let reload_provider = builtin.clone();
+    let reload_theme = theme_css.to_string();
     let (tx, rx) = std::sync::mpsc::channel::<()>();
+
     gtk4::glib::timeout_add_local(Duration::from_millis(200), move || {
         let mut changed = false;
         while rx.try_recv().is_ok() {
             changed = true;
         }
         if changed {
-            provider_for_reload.load_from_path(&reload_path);
+            let base = std::fs::read_to_string("src/popup.css").unwrap_or_default();
+            reload_provider.load_from_data(&format!("{}\n{}", reload_theme, base));
             println!("CSS reloaded");
         }
         gtk4::glib::ControlFlow::Continue
@@ -223,22 +242,15 @@ fn load_css(use_mock: bool) -> Option<RecommendedWatcher> {
             Err(_) => return None,
         };
 
+    let watch_path = PathBuf::from("src/popup.css");
     if watcher
-        .watch(path.as_path(), RecursiveMode::NonRecursive)
+        .watch(&watch_path, RecursiveMode::NonRecursive)
         .is_err()
     {
         return None;
     }
 
     Some(watcher)
-}
-
-fn resolve_css_path(use_mock: bool) -> Option<PathBuf> {
-    if use_mock {
-        return Some(PathBuf::from("src").join("popup.css"));
-    }
-
-    dirs::config_dir().map(|p| p.join("quotabar").join("style.css"))
 }
 
 fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
