@@ -1,4 +1,5 @@
 use crate::models::{IdentitySnapshot, Provider, RateWindow, UsageSnapshot};
+use crate::providers::format_reset_time;
 use crate::providers::ProviderFetcher;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -346,27 +347,6 @@ impl ProviderFetcher for CodexProvider {
 
     fn name(&self) -> &'static str {
         "Codex"
-    }
-}
-
-fn format_reset_time(reset: DateTime<Utc>, now: DateTime<Utc>) -> String {
-    let duration = reset.signed_duration_since(now);
-    let hours = duration.num_hours();
-    let minutes = duration.num_minutes() % 60;
-
-    if hours <= 0 && minutes <= 0 {
-        "now".to_string()
-    } else if hours < 1 {
-        format!("in {} min", minutes.max(1))
-    } else if hours < 24 {
-        format!("in {}h", hours)
-    } else {
-        let days = hours / 24;
-        if days == 1 {
-            "in 1 day".to_string()
-        } else {
-            format!("in {} days", days)
-        }
     }
 }
 
