@@ -22,6 +22,8 @@ mod providers;
 mod themes;
 
 const MIN_FETCH_INTERVAL_SECS: i64 = 300; // 5 minutes
+const HIGH_USAGE_FETCH_INTERVAL_SECS: i64 = 30; // 30 seconds when usage >= 80%
+const HIGH_USAGE_THRESHOLD: f64 = 80.0;
 
 #[derive(Parser)]
 #[command(name = "quotabar")]
@@ -70,6 +72,7 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Fetch => {
+            let previous = CacheState::load().ok().flatten();
             let mut snapshots = HashMap::new();
             let mut errors = HashMap::new();
 
@@ -81,6 +84,12 @@ async fn main() -> Result<()> {
                     cache::append_log(&format!("Claude fetch error: {}", e));
                     eprintln!("Failed to fetch Claude: {}", e);
                     errors.insert(Provider::Claude, e.to_string());
+                    if let Some(prev) = previous
+                        .as_ref()
+                        .and_then(|c| c.get(Provider::Claude).cloned())
+                    {
+                        snapshots.insert(Provider::Claude, prev);
+                    }
                 }
             }
 
@@ -92,6 +101,12 @@ async fn main() -> Result<()> {
                     cache::append_log(&format!("Codex fetch error: {}", e));
                     eprintln!("Failed to fetch Codex: {}", e);
                     errors.insert(Provider::Codex, e.to_string());
+                    if let Some(prev) = previous
+                        .as_ref()
+                        .and_then(|c| c.get(Provider::Codex).cloned())
+                    {
+                        snapshots.insert(Provider::Codex, prev);
+                    }
                 }
             }
 
@@ -172,15 +187,21 @@ struct WaybarOutput {
 async fn waybar_output() -> WaybarOutput {
     let config = Config::load().unwrap_or_default();
 
-    // Serve from cache if fresh enough
+    // Serve from cache if fresh enough (poll faster when usage is high)
     if let Some(cached) = CacheState::load().ok().flatten() {
         let age = Utc::now().signed_duration_since(cached.updated_at);
-        if age.num_seconds() < MIN_FETCH_INTERVAL_SECS {
+        let interval = if max_usage(&cached.snapshots) >= HIGH_USAGE_THRESHOLD {
+            HIGH_USAGE_FETCH_INTERVAL_SECS
+        } else {
+            MIN_FETCH_INTERVAL_SECS
+        };
+        if age.num_seconds() < interval {
             return build_waybar_output(&cached.snapshots, config.general.selected_provider);
         }
     }
 
     // Cache is stale or missing, fetch fresh data
+    let previous = CacheState::load().ok().flatten();
     let mut snapshots = HashMap::new();
     let mut errors = HashMap::new();
 
@@ -191,6 +212,13 @@ async fn waybar_output() -> WaybarOutput {
         Err(e) => {
             cache::append_log(&format!("Claude fetch error: {}", e));
             errors.insert(Provider::Claude, e.to_string());
+            // Carry forward last known snapshot so reset times stay visible
+            if let Some(prev) = previous
+                .as_ref()
+                .and_then(|c| c.get(Provider::Claude).cloned())
+            {
+                snapshots.insert(Provider::Claude, prev);
+            }
         }
     }
     match fetch_codex().await {
@@ -200,6 +228,12 @@ async fn waybar_output() -> WaybarOutput {
         Err(e) => {
             cache::append_log(&format!("Codex fetch error: {}", e));
             errors.insert(Provider::Codex, e.to_string());
+            if let Some(prev) = previous
+                .as_ref()
+                .and_then(|c| c.get(Provider::Codex).cloned())
+            {
+                snapshots.insert(Provider::Codex, prev);
+            }
         }
     }
 
@@ -213,6 +247,18 @@ async fn waybar_output() -> WaybarOutput {
 
     // Build output from snapshots
     build_waybar_output(&snapshots, config.general.selected_provider)
+}
+
+/// Return the highest usage percentage across all providers and rate windows.
+fn max_usage(snapshots: &HashMap<Provider, UsageSnapshot>) -> f64 {
+    snapshots
+        .values()
+        .flat_map(|s| {
+            [&s.primary, &s.secondary, &s.tertiary]
+                .into_iter()
+                .filter_map(|w| w.as_ref().map(|r| r.used_percent))
+        })
+        .fold(0.0_f64, f64::max)
 }
 
 fn build_waybar_output(

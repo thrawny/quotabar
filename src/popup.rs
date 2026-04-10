@@ -97,7 +97,8 @@ fn build_ui(
     let providers = [Provider::Claude, Provider::Codex, Provider::OpenCode];
     for provider in providers {
         if let Some(snapshot) = snapshots.get(&provider) {
-            let section = create_provider_section(snapshot);
+            let section =
+                create_provider_section(snapshot, errors.get(&provider).map(|s| s.as_str()));
             if Some(snapshot.provider) == selected_provider {
                 section.add_css_class("selected");
             }
@@ -253,9 +254,12 @@ fn load_css(use_mock: bool, theme_name: &str) -> Option<RecommendedWatcher> {
     Some(watcher)
 }
 
-fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
+fn create_provider_section(snapshot: &UsageSnapshot, error: Option<&str>) -> GtkBox {
     let section = GtkBox::new(Orientation::Vertical, 8);
     section.add_css_class("provider-section");
+    if error.is_some() {
+        section.add_css_class("provider-stale");
+    }
 
     // Provider header with icon and name
     let header = GtkBox::new(Orientation::Horizontal, 8);
@@ -342,6 +346,15 @@ fn create_provider_section(snapshot: &UsageSnapshot) -> GtkBox {
         cost_box.append(&cost_label);
 
         section.append(&cost_box);
+    }
+
+    // Show error banner if fetch failed (snapshot is stale/carried forward)
+    if let Some(err) = error {
+        let error_label = Label::new(Some(err));
+        error_label.add_css_class("error-text");
+        error_label.set_wrap(true);
+        error_label.set_halign(Align::Start);
+        section.append(&error_label);
     }
 
     section
