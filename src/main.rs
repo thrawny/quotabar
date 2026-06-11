@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 mod cache;
 mod config;
+mod icons;
 mod mock;
 mod models;
 mod pace;
@@ -42,7 +43,11 @@ enum Commands {
         mock: bool,
     },
     /// Fetch, cache, and print JSON for Waybar
-    Waybar,
+    Waybar {
+        /// Only show this provider (icon is expected to come from Waybar CSS)
+        #[arg(long)]
+        provider: Option<Provider>,
+    },
     /// Print all provider status to terminal
     Status,
     /// Force fetch and update cache
@@ -57,8 +62,9 @@ async fn main() -> Result<()> {
         Commands::Popup { mock } => {
             popup::run(mock)?;
         }
-        Commands::Waybar => {
-            let output = waybar_output().await;
+        Commands::Waybar { provider } => {
+            icons::ensure_icons();
+            let output = waybar_output(provider).await;
             println!("{}", serde_json::to_string(&output).unwrap());
         }
         Commands::Status => {
@@ -184,8 +190,11 @@ struct WaybarOutput {
     class: Vec<String>,
 }
 
-async fn waybar_output() -> WaybarOutput {
+async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
     let config = Config::load().unwrap_or_default();
+    let selected = provider.or(config.general.selected_provider);
+    // With an explicit --provider the icon comes from Waybar CSS, so omit the glyph
+    let show_icon = provider.is_none();
 
     // Serve from cache if fresh enough (poll faster when usage is high)
     if let Some(cached) = CacheState::load().ok().flatten() {
@@ -196,7 +205,7 @@ async fn waybar_output() -> WaybarOutput {
             MIN_FETCH_INTERVAL_SECS
         };
         if age.num_seconds() < interval {
-            return build_waybar_output(&cached.snapshots, config.general.selected_provider);
+            return build_waybar_output(&cached.snapshots, selected, show_icon);
         }
     }
 
@@ -246,7 +255,7 @@ async fn waybar_output() -> WaybarOutput {
     let _ = state.save();
 
     // Build output from snapshots
-    build_waybar_output(&snapshots, config.general.selected_provider)
+    build_waybar_output(&snapshots, selected, show_icon)
 }
 
 /// Return the highest usage percentage across all providers and rate windows.
@@ -264,16 +273,23 @@ fn max_usage(snapshots: &HashMap<Provider, UsageSnapshot>) -> f64 {
 fn build_waybar_output(
     snapshots: &HashMap<Provider, UsageSnapshot>,
     selected_provider: Option<Provider>,
+    show_icon: bool,
 ) -> WaybarOutput {
-    let icon = "󰧑";
-    let snapshot = selected_provider
-        .and_then(|provider| snapshots.get(&provider))
-        .or_else(|| snapshots.get(&Provider::Claude))
-        .or_else(|| snapshots.get(&Provider::Codex))
-        .or_else(|| snapshots.get(&Provider::OpenCode));
+    let icon = if show_icon { "󰧑 " } else { "" };
+    let snapshot = if show_icon {
+        // Legacy single-module mode: fall back to whichever provider has data
+        selected_provider
+            .and_then(|provider| snapshots.get(&provider))
+            .or_else(|| snapshots.get(&Provider::Claude))
+            .or_else(|| snapshots.get(&Provider::Codex))
+            .or_else(|| snapshots.get(&Provider::OpenCode))
+    } else {
+        // Explicit --provider: never show another provider's data
+        selected_provider.and_then(|provider| snapshots.get(&provider))
+    };
     let Some(snapshot) = snapshot else {
         return WaybarOutput {
-            text: format!("{} --", icon),
+            text: format!("{}--", icon),
             tooltip: "No data available".to_string(),
             class: vec!["error".to_string()],
         };
@@ -284,10 +300,10 @@ fn build_waybar_output(
 
     // Build text: "󰧑 31% / 51%" (session / week)
     let text = match (session, week) {
-        (Some(s), Some(w)) => format!("{} {:.0}% / {:.0}%", icon, s, w),
-        (Some(s), None) => format!("{} {:.0}%", icon, s),
-        (None, Some(w)) => format!("{} {:.0}%", icon, w),
-        (None, None) => format!("{} --", icon),
+        (Some(s), Some(w)) => format!("{}{:.0}% / {:.0}%", icon, s, w),
+        (Some(s), None) => format!("{}{:.0}%", icon, s),
+        (None, Some(w)) => format!("{}{:.0}%", icon, w),
+        (None, None) => format!("{}--", icon),
     };
 
     // Build tooltip with more detail
