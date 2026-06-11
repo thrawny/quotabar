@@ -16,10 +16,11 @@ Run `just install` after code changes (not needed for docs).
 
 ## Architecture
 
-- `src/main.rs` - CLI entry point (popup, waybar subcommands)
+- `src/main.rs` - CLI entry point (popup, waybar subcommands; `waybar --provider <x>` for per-provider modules)
 - `src/popup.rs` - GTK4 layer-shell popup UI
+- `src/icons.rs` - Waybar logos embedded at compile time, written to `~/.local/share/quotabar/`
 - `src/providers/` - Provider implementations (Claude, Codex, OpenCode)
-- `assets/` - SVG icons (use `currentColor` for theming)
+- `assets/` - SVG icons (use `currentColor` for theming; `assets/waybar/` has fixed colors for Waybar CSS)
 
 ## Future Work
 
