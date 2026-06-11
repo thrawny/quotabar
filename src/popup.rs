@@ -297,6 +297,14 @@ fn create_provider_section(snapshot: &UsageSnapshot, error: Option<&str>) -> Gtk
         let link = LinkButton::new(url);
         link.set_label("Usage");
         link.add_css_class("usage-link");
+        // GTK's default handler goes through the desktop portal, which fails
+        // silently on layer-shell windows; open via xdg-open instead
+        link.connect_activate_link(move |_| {
+            if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
+                eprintln!("Failed to open {}: {}", url, e);
+            }
+            gtk4::glib::Propagation::Stop
+        });
         right_side.append(&link);
     }
 

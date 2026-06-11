@@ -298,9 +298,11 @@ fn build_waybar_output(
     let session = snapshot.primary.as_ref().map(|r| r.used_percent);
     let week = snapshot.secondary.as_ref().map(|r| r.used_percent);
 
-    // Build text: "󰧑 31% / 51%" (session / week)
+    // Build text: session at full strength, week dimmed via Pango alpha
     let text = match (session, week) {
-        (Some(s), Some(w)) => format!("{}{:.0}% / {:.0}%", icon, s, w),
+        (Some(s), Some(w)) => {
+            format!("{}{:.0}% <span alpha='55%'>{:.0}%</span>", icon, s, w)
+        }
         (Some(s), None) => format!("{}{:.0}%", icon, s),
         (None, Some(w)) => format!("{}{:.0}%", icon, w),
         (None, None) => format!("{}--", icon),
