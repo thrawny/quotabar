@@ -142,6 +142,11 @@ window.background {
     margin-top: 2px;
 }
 
+.quota-bar-container.stale .quota-percent {
+    color: @text_dim;
+    font-style: italic;
+}
+
 .cost-info {
     margin-top: 8px;
     padding: 8px;

@@ -320,22 +320,36 @@ fn create_provider_section(snapshot: &UsageSnapshot, error: Option<&str>) -> Gtk
     header.append(&right_side);
     section.append(&header);
 
+    let now = Utc::now();
+
     // Primary quota bar (5-hour session)
     if let Some(ref primary) = snapshot.primary {
-        let bar = create_quota_bar("Current session", primary, None);
+        let expired = primary.is_expired(snapshot.updated_at, now);
+        let bar = create_quota_bar("Current session", primary, None, expired);
         section.append(&bar);
     }
 
     // Secondary quota bar (7-day all models)
     if let Some(ref secondary) = snapshot.secondary {
-        let pace = pace::compute_pace(snapshot.provider, secondary, Utc::now());
-        let bar = create_quota_bar("Current week (all models)", secondary, pace.as_ref());
+        let expired = secondary.is_expired(snapshot.updated_at, now);
+        let pace = if expired {
+            None
+        } else {
+            pace::compute_pace(snapshot.provider, secondary, now)
+        };
+        let bar = create_quota_bar(
+            "Current week (all models)",
+            secondary,
+            pace.as_ref(),
+            expired,
+        );
         section.append(&bar);
     }
 
     // Tertiary quota bar (7-day model-specific)
     if let Some(ref tertiary) = snapshot.tertiary {
-        let bar = create_quota_bar("Current week (Sonnet only)", tertiary, None);
+        let expired = tertiary.is_expired(snapshot.updated_at, now);
+        let bar = create_quota_bar("Current week (Sonnet only)", tertiary, None, expired);
         section.append(&bar);
     }
 
@@ -372,21 +386,28 @@ fn create_quota_bar(
     label: &str,
     window: &crate::models::RateWindow,
     pace: Option<&UsagePace>,
+    expired: bool,
 ) -> GtkBox {
     let container = GtkBox::new(Orientation::Vertical, 4);
     container.add_css_class("quota-bar-container");
+    if expired {
+        container.add_css_class("stale");
+    }
 
     let used_percent = window.used_percent;
 
-    // Progress bar (shows used percentage)
+    // Progress bar (shows used percentage; empty when the window has lapsed
+    // and the cached value no longer applies)
     let bar = ProgressBar::new();
-    bar.set_fraction(used_percent / 100.0);
+    bar.set_fraction(if expired { 0.0 } else { used_percent / 100.0 });
     bar.add_css_class("quota-bar");
 
-    if used_percent >= 90.0 {
-        bar.add_css_class("critical");
-    } else if used_percent >= 75.0 {
-        bar.add_css_class("warning");
+    if !expired {
+        if used_percent >= 90.0 {
+            bar.add_css_class("critical");
+        } else if used_percent >= 75.0 {
+            bar.add_css_class("warning");
+        }
     }
 
     container.append(&bar);
@@ -398,7 +419,12 @@ fn create_quota_bar(
     label_widget.add_css_class("quota-label");
     label_row.append(&label_widget);
 
-    let percent_label = Label::new(Some(&format!("{:.0}% used", used_percent)));
+    let percent_text = if expired {
+        "unknown".to_string()
+    } else {
+        format!("{:.0}% used", used_percent)
+    };
+    let percent_label = Label::new(Some(&percent_text));
     percent_label.add_css_class("quota-percent");
     percent_label.set_hexpand(true);
     percent_label.set_halign(Align::End);
@@ -406,8 +432,13 @@ fn create_quota_bar(
 
     container.append(&label_row);
 
-    // Reset time
-    if let Some(reset_text) = window.reset_description.as_deref() {
+    // Reset time (the cached description is meaningless once the window lapsed)
+    if expired {
+        let reset_label = Label::new(Some("Window lapsed · refresh pending"));
+        reset_label.add_css_class("reset-time");
+        reset_label.set_halign(Align::Start);
+        container.append(&reset_label);
+    } else if let Some(reset_text) = window.reset_description.as_deref() {
         let reset_label = Label::new(Some(&format!("Resets {}", reset_text)));
         reset_label.add_css_class("reset-time");
         reset_label.set_halign(Align::Start);

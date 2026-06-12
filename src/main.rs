@@ -295,57 +295,87 @@ fn build_waybar_output(
         };
     };
 
-    let session = snapshot.primary.as_ref().map(|r| r.used_percent);
-    let week = snapshot.secondary.as_ref().map(|r| r.used_percent);
+    let now = Utc::now();
+    // Expired windows render as unknown: the window ended, and usage may have
+    // continued on another machine, so the cached percentage is meaningless.
+    let session = snapshot
+        .primary
+        .as_ref()
+        .map(|r| (r, r.is_expired(snapshot.updated_at, now)));
+    let week = snapshot
+        .secondary
+        .as_ref()
+        .map(|r| (r, r.is_expired(snapshot.updated_at, now)));
+
+    let fmt = |(r, expired): (&models::RateWindow, bool)| {
+        if expired {
+            "?".to_string()
+        } else {
+            format!("{:.0}%", r.used_percent)
+        }
+    };
 
     // Build text: session at full strength, week dimmed via Pango alpha
     let text = match (session, week) {
         (Some(s), Some(w)) => {
-            format!("{}{:.0}% <span alpha='55%'>{:.0}%</span>", icon, s, w)
+            format!("{}{} <span alpha='55%'>{}</span>", icon, fmt(s), fmt(w))
         }
-        (Some(s), None) => format!("{}{:.0}%", icon, s),
-        (None, Some(w)) => format!("{}{:.0}%", icon, w),
+        (Some(s), None) => format!("{}{}", icon, fmt(s)),
+        (None, Some(w)) => format!("{}{}", icon, fmt(w)),
         (None, None) => format!("{}--", icon),
     };
 
     // Build tooltip with more detail
     let mut tooltip_parts = vec![snapshot.provider.display_name().to_string()];
-    if let Some(ref primary) = snapshot.primary {
-        tooltip_parts.push(format!(
-            "Session: {:.0}% (resets {})",
-            primary.used_percent,
-            primary.reset_description.as_deref().unwrap_or("--")
-        ));
-    }
-    if let Some(ref secondary) = snapshot.secondary {
-        let mut week_line = format!(
-            "Week: {:.0}% (resets {})",
-            secondary.used_percent,
-            secondary.reset_description.as_deref().unwrap_or("--")
-        );
-        if let Some(p) = pace::compute_pace(snapshot.provider, secondary, Utc::now()) {
-            let left = pace::format_pace_left(&p);
-            if let Some(right) = pace::format_pace_right(&p) {
-                week_line.push_str(&format!(" · {} · {}", left, right));
-            } else {
-                week_line.push_str(&format!(" · {}", left));
-            }
+    if let Some((primary, expired)) = session {
+        if expired {
+            tooltip_parts.push("Session: unknown (window lapsed, refresh pending)".to_string());
+        } else {
+            tooltip_parts.push(format!(
+                "Session: {:.0}% (resets {})",
+                primary.used_percent,
+                primary.reset_description.as_deref().unwrap_or("--")
+            ));
         }
-        tooltip_parts.push(week_line);
+    }
+    if let Some((secondary, expired)) = week {
+        if expired {
+            tooltip_parts.push("Week: unknown (window lapsed, refresh pending)".to_string());
+        } else {
+            let mut week_line = format!(
+                "Week: {:.0}% (resets {})",
+                secondary.used_percent,
+                secondary.reset_description.as_deref().unwrap_or("--")
+            );
+            if let Some(p) = pace::compute_pace(snapshot.provider, secondary, now) {
+                let left = pace::format_pace_left(&p);
+                if let Some(right) = pace::format_pace_right(&p) {
+                    week_line.push_str(&format!(" · {} · {}", left, right));
+                } else {
+                    week_line.push_str(&format!(" · {}", left));
+                }
+            }
+            tooltip_parts.push(week_line);
+        }
     }
 
-    // Class based on highest usage
+    // Class based on highest non-expired usage
     let max_used = [session, week]
         .into_iter()
         .flatten()
+        .filter(|(_, expired)| !expired)
+        .map(|(r, _)| r.used_percent)
         .fold(0.0_f64, f64::max);
-    let class = if max_used >= 90.0 {
+    let mut class = if max_used >= 90.0 {
         vec!["critical".to_string()]
     } else if max_used >= 75.0 {
         vec!["warning".to_string()]
     } else {
         vec![]
     };
+    if session.is_some_and(|(_, e)| e) || week.is_some_and(|(_, e)| e) {
+        class.push("stale".to_string());
+    }
 
     WaybarOutput {
         text,

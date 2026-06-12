@@ -54,6 +54,21 @@ impl RateWindow {
         100.0 - self.used_percent
     }
 
+    /// Whether the window this data describes has already ended. Once true,
+    /// the cached percentage says nothing about the current window (usage may
+    /// have continued on another machine), so it should render as unknown.
+    pub fn is_expired(&self, snapshot_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+        if let Some(resets_at) = self.resets_at {
+            now >= resets_at
+        } else if let Some(minutes) = self.window_minutes {
+            // No exact reset time (e.g. Claude CLI fallback): the window that
+            // produced this number can't outlive its own length.
+            now.signed_duration_since(snapshot_at) >= chrono::Duration::minutes(minutes as i64)
+        } else {
+            false
+        }
+    }
+
     pub fn status_class(&self) -> &'static str {
         if self.used_percent >= 90.0 {
             "critical"
@@ -117,6 +132,51 @@ pub struct UsageSnapshot {
     pub identity: Option<IdentitySnapshot>,
     /// When this snapshot was captured
     pub updated_at: DateTime<Utc>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+
+    fn window(resets_at: Option<DateTime<Utc>>, window_minutes: Option<i32>) -> RateWindow {
+        RateWindow {
+            used_percent: 100.0,
+            window_minutes,
+            resets_at,
+            reset_description: None,
+        }
+    }
+
+    #[test]
+    fn test_is_expired_with_reset_timestamp() {
+        let now = Utc::now();
+        let snapshot_at = now - Duration::hours(8);
+
+        let past_reset = window(Some(now - Duration::hours(3)), Some(300));
+        assert!(past_reset.is_expired(snapshot_at, now));
+
+        let future_reset = window(Some(now + Duration::hours(2)), Some(300));
+        assert!(!future_reset.is_expired(snapshot_at, now));
+    }
+
+    #[test]
+    fn test_is_expired_without_reset_falls_back_to_window_length() {
+        let now = Utc::now();
+        let w = window(None, Some(300));
+
+        // Snapshot older than the 5h window length: definitely lapsed
+        assert!(w.is_expired(now - Duration::hours(8), now));
+        // Recent snapshot: window may still be running
+        assert!(!w.is_expired(now - Duration::hours(1), now));
+    }
+
+    #[test]
+    fn test_is_expired_unknown_window_never_expires() {
+        let now = Utc::now();
+        let w = window(None, None);
+        assert!(!w.is_expired(now - Duration::days(30), now));
+    }
 }
 
 impl UsageSnapshot {
