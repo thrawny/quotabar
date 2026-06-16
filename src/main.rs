@@ -315,14 +315,44 @@ fn build_waybar_output(
         }
     };
 
-    // Build text: session at full strength, week dimmed via Pango alpha
-    let text = match (session, week) {
-        (Some(s), Some(w)) => {
-            format!("{}{} <span alpha='55%'>{}</span>", icon, fmt(s), fmt(w))
+    // Coarse time left in the session window, e.g. "2h" / "45m". Shown at any
+    // usage level, but only when an exact reset timestamp is known and the
+    // window is still live; a lapsed or timestamp-less (CLI fallback) window
+    // would make this misleading.
+    let session_time_left = session.and_then(|(r, expired)| {
+        if expired {
+            return None;
         }
-        (Some(s), None) => format!("{}{}", icon, fmt(s)),
-        (None, Some(w)) => format!("{}{}", icon, fmt(w)),
-        (None, None) => format!("{}--", icon),
+        let resets_at = r.resets_at?;
+        let secs = (resets_at - now).num_seconds();
+        (secs > 0).then(|| format_session_glance(secs))
+    });
+
+    // Build text: session % at full strength; the week % and the session
+    // time-left trail behind dimmed via Pango alpha. Session % leads because
+    // that's the at-a-glance number; time-left sits last as quiet context.
+    let mut faint = Vec::new();
+    if let Some(w) = week {
+        faint.push(fmt(w));
+    }
+    if let Some(t) = &session_time_left {
+        faint.push(t.clone());
+    }
+    let text = if let Some(s) = session {
+        if faint.is_empty() {
+            format!("{}{}", icon, fmt(s))
+        } else {
+            format!(
+                "{}{} <span alpha='55%'>{}</span>",
+                icon,
+                fmt(s),
+                faint.join(" ")
+            )
+        }
+    } else if let Some(w) = week {
+        format!("{}{}", icon, fmt(w))
+    } else {
+        format!("{}--", icon)
     };
 
     // Build tooltip with more detail
@@ -331,11 +361,18 @@ fn build_waybar_output(
         if expired {
             tooltip_parts.push("Session: unknown (window lapsed, refresh pending)".to_string());
         } else {
-            tooltip_parts.push(format!(
-                "Session: {:.0}% (resets {})",
-                primary.used_percent,
-                primary.reset_description.as_deref().unwrap_or("--")
-            ));
+            let mut line = format!("Session: {:.0}%", primary.used_percent);
+            if let Some(resets_at) = primary.resets_at {
+                let secs = (resets_at - now).num_seconds();
+                if secs > 0 {
+                    line.push_str(&format!(" · {} left", pace::format_duration(secs as f64)));
+                }
+                let clock = resets_at.with_timezone(&chrono::Local).format("%H:%M");
+                line.push_str(&format!(" · resets {}", clock));
+            } else if let Some(desc) = primary.reset_description.as_deref() {
+                line.push_str(&format!(" (resets {})", desc));
+            }
+            tooltip_parts.push(line);
         }
     }
     if let Some((secondary, expired)) = week {
@@ -381,5 +418,45 @@ fn build_waybar_output(
         text,
         tooltip: tooltip_parts.join("\n"),
         class,
+    }
+}
+
+/// Coarse session time-left for the waybar glance. At an hour or more, round to
+/// the nearest whole hour (1h10m → "1h", 1h30m → "2h"); under an hour, show the
+/// minutes (e.g. "45m"). Rounding minutes first keeps the boundary clean so a
+/// near-hour reads "1h" rather than "60m".
+fn format_session_glance(secs: i64) -> String {
+    let total_minutes = (secs as f64 / 60.0).round() as i64;
+    if total_minutes < 60 {
+        format!("{}m", total_minutes.max(1))
+    } else {
+        let hours = (total_minutes as f64 / 60.0).round() as i64;
+        format!("{}h", hours)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_session_glance;
+
+    #[test]
+    fn glance_rounds_to_nearest_hour() {
+        assert_eq!(format_session_glance(70 * 60), "1h"); // 1h10m
+        assert_eq!(format_session_glance(90 * 60), "2h"); // 1h30m
+        assert_eq!(format_session_glance(95 * 60), "2h"); // 1h35m
+        assert_eq!(format_session_glance(5 * 3600), "5h");
+    }
+
+    #[test]
+    fn glance_shows_minutes_under_an_hour() {
+        assert_eq!(format_session_glance(45 * 60), "45m");
+        assert_eq!(format_session_glance(60), "1m");
+    }
+
+    #[test]
+    fn glance_avoids_sixty_minute_boundary() {
+        // 59m40s rounds up to "1h" instead of an ugly "60m"
+        assert_eq!(format_session_glance(59 * 60 + 40), "1h");
+        assert_eq!(format_session_glance(59 * 60), "59m");
     }
 }
