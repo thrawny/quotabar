@@ -429,6 +429,7 @@ fn trim_to_usage_panel(text: &str) -> &str {
 /// Parse the stripped CLI /usage output into usage windows.
 fn parse_cli_usage(raw: &str) -> Result<CliUsage> {
     let clean = strip_ansi(raw);
+
     let panel = trim_to_usage_panel(&clean);
     let lines: Vec<&str> = panel.lines().collect();
 
@@ -444,6 +445,9 @@ fn parse_cli_usage(raw: &str) -> Result<CliUsage> {
     );
 
     if session.is_none() {
+        if let Some(cli_error) = extract_cli_usage_error(&clean) {
+            return Err(anyhow!(cli_error));
+        }
         return Err(anyhow!(
             "Could not parse CLI usage output: 'Current session' not found"
         ));
@@ -454,6 +458,30 @@ fn parse_cli_usage(raw: &str) -> Result<CliUsage> {
         weekly,
         model,
     })
+}
+
+/// Return a user-actionable error when Claude CLI rendered an error instead of the usage panel.
+fn extract_cli_usage_error(text: &str) -> Option<&'static str> {
+    let lower = text.to_lowercase();
+    let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
+
+    if lower.contains("rate_limit_error")
+        || lower.contains("rate limited")
+        || compact.contains("ratelimited")
+    {
+        return Some("Claude CLI usage endpoint is rate limited right now. Please try again later.");
+    }
+    if lower.contains("token_expired") || lower.contains("token has expired") {
+        return Some("Claude CLI token expired. Run `claude login` to refresh.");
+    }
+    if lower.contains("authentication_error") {
+        return Some("Claude CLI authentication error. Run `claude login`.");
+    }
+    if lower.contains("failed to load usage data") || compact.contains("failedtoloadusagedata") {
+        return Some("Claude CLI could not load usage data. Open the CLI and retry `/usage`.");
+    }
+
+    None
 }
 
 /// Find a labeled section and extract its percentage and reset text.
@@ -620,6 +648,48 @@ Settings: Status Config  Usage  (tab to cycle)
     fn test_parse_cli_usage_missing_session() {
         let input = "Some random output without usage data\n";
         assert!(parse_cli_usage(input).is_err());
+    }
+
+    #[test]
+    fn test_parse_cli_usage_rate_limit_error() {
+        let input = r#"Anthropic API error (429 Too Many Requests): {
+  "error": {
+    "type": "rate_limit_error",
+    "message": "Rate limited. Please try again later."
+  }
+}"#;
+        let err = parse_cli_usage(input).err().unwrap().to_string();
+        assert_eq!(
+            err,
+            "Claude CLI usage endpoint is rate limited right now. Please try again later."
+        );
+    }
+
+    #[test]
+    fn test_parse_cli_usage_keeps_partial_quota_when_breakdown_rate_limited() {
+        let input = "\
+Settings Status Config Usage Stats
+
+Current session
+████░░░░░░ 28% used
+Resets 3:10pm (Europe/Stockholm)
+
+Current week (all models)
+█░░░░░░░░░ 3% used
+Resets Jul 11, 8am (Europe/Stockholm)
+
+Per-model breakdown unavailable (rate limited — try again in a moment)
+";
+        let result = parse_cli_usage(input).unwrap();
+        assert_eq!(result.session.as_ref().unwrap().used_percent, 28.0);
+        assert_eq!(result.weekly.as_ref().unwrap().used_percent, 3.0);
+    }
+
+    #[test]
+    fn test_parse_cli_usage_authentication_error() {
+        let input = r#"{"type":"authentication_error","message":"invalid token"}"#;
+        let err = parse_cli_usage(input).err().unwrap().to_string();
+        assert_eq!(err, "Claude CLI authentication error. Run `claude login`.");
     }
 
     #[test]
