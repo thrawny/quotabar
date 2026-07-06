@@ -331,7 +331,15 @@ impl ProviderFetcher for ClaudeProvider {
             Err(api_err) => {
                 eprintln!("Claude API failed ({}), trying CLI fallback...", api_err);
                 self.fetch_via_cli().await.map_err(|cli_err| {
-                    anyhow!("{}\nCLI fallback also failed: {}", api_err, cli_err)
+                    if is_rate_limit_text(&api_err.to_string())
+                        && cli_err
+                            .to_string()
+                            .contains("Could not parse CLI usage output: 'Current session' not found")
+                    {
+                        anyhow!("Claude usage endpoint is rate limited right now. Please try again later.")
+                    } else {
+                        anyhow!("{}\nCLI fallback also failed: {}", api_err, cli_err)
+                    }
                 })
             }
         }
@@ -465,10 +473,7 @@ fn extract_cli_usage_error(text: &str) -> Option<&'static str> {
     let lower = text.to_lowercase();
     let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
 
-    if lower.contains("rate_limit_error")
-        || lower.contains("rate limited")
-        || compact.contains("ratelimited")
-    {
+    if is_rate_limit_text_with_compact(&lower, &compact) {
         return Some("Claude CLI usage endpoint is rate limited right now. Please try again later.");
     }
     if lower.contains("token_expired") || lower.contains("token has expired") {
@@ -482,6 +487,19 @@ fn extract_cli_usage_error(text: &str) -> Option<&'static str> {
     }
 
     None
+}
+
+fn is_rate_limit_text(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
+    is_rate_limit_text_with_compact(&lower, &compact)
+}
+
+fn is_rate_limit_text_with_compact(lower: &str, compact: &str) -> bool {
+    lower.contains("rate_limit_error")
+        || lower.contains("rate limited")
+        || lower.contains("too many requests")
+        || compact.contains("ratelimited")
 }
 
 /// Find a labeled section and extract its percentage and reset text.
