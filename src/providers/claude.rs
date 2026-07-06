@@ -247,6 +247,7 @@ impl ClaudeProvider {
             secondary,
             tertiary,
             cost,
+            codex_reset_credits: None,
             identity: Some(IdentitySnapshot {
                 email: None,
                 plan: creds.plan_name(),
@@ -283,6 +284,7 @@ impl ClaudeProvider {
                 reset_description: w.reset_description,
             }),
             cost: None,
+            codex_reset_credits: None,
             identity: Some(IdentitySnapshot {
                 email: None,
                 plan,
@@ -474,7 +476,9 @@ fn extract_cli_usage_error(text: &str) -> Option<&'static str> {
     let compact: String = lower.chars().filter(|c| !c.is_whitespace()).collect();
 
     if is_rate_limit_text_with_compact(&lower, &compact) {
-        return Some("Claude CLI usage endpoint is rate limited right now. Please try again later.");
+        return Some(
+            "Claude CLI usage endpoint is rate limited right now. Please try again later.",
+        );
     }
     if lower.contains("token_expired") || lower.contains("token has expired") {
         return Some("Claude CLI token expired. Run `claude login` to refresh.");

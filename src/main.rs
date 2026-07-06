@@ -181,6 +181,11 @@ fn print_status(snapshot: &models::UsageSnapshot) {
             cost.period.as_deref().unwrap_or("")
         );
     }
+    if let Some(ref reset_credits) = snapshot.codex_reset_credits {
+        for line in reset_credits_status_lines(reset_credits, Utc::now()) {
+            println!("  {}", line);
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -395,6 +400,9 @@ fn build_waybar_output(
             tooltip_parts.push(week_line);
         }
     }
+    if let Some(ref reset_credits) = snapshot.codex_reset_credits {
+        tooltip_parts.extend(reset_credits_status_lines(reset_credits, now));
+    }
 
     // Class based on highest non-expired usage
     let max_used = [session, week]
@@ -419,6 +427,36 @@ fn build_waybar_output(
         tooltip: tooltip_parts.join("\n"),
         class,
     }
+}
+
+fn reset_credits_status_lines(
+    snapshot: &models::CodexResetCreditsSnapshot,
+    now: chrono::DateTime<Utc>,
+) -> Vec<String> {
+    let available = snapshot.available_credits(now);
+    if available.is_empty() {
+        return Vec::new();
+    }
+
+    let count = if available.len() == 1 {
+        "1 available".to_string()
+    } else {
+        format!("{} available", available.len())
+    };
+    let expiries = available
+        .iter()
+        .map(|credit| {
+            credit
+                .expires_at
+                .map(|expires_at| providers::format_reset_time(expires_at, now))
+                .unwrap_or_else(|| "no expiry".to_string())
+        })
+        .collect::<Vec<_>>();
+    vec![format!(
+        "Limit reset credits: {} · expires {}",
+        count,
+        expiries.join(" · ")
+    )]
 }
 
 /// Coarse session time-left for the waybar glance. At an hour or more, round to

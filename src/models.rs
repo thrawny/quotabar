@@ -116,6 +116,47 @@ pub struct IdentitySnapshot {
     pub organization: Option<String>,
 }
 
+/// A free/manual Codex rate-limit reset credit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexResetCredit {
+    pub reset_type: String,
+    pub status: String,
+    pub granted_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub redeem_started_at: Option<DateTime<Utc>>,
+    pub redeemed_at: Option<DateTime<Utc>>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Read-only inventory returned by `/wham/rate-limit-reset-credits`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexResetCreditsSnapshot {
+    pub credits: Vec<CodexResetCredit>,
+    pub available_count: usize,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CodexResetCreditsSnapshot {
+    pub fn available_credits(&self, now: DateTime<Utc>) -> Vec<&CodexResetCredit> {
+        let mut credits = self
+            .credits
+            .iter()
+            .filter(|credit| {
+                credit.status == "available"
+                    && credit.expires_at.map(|expiry| expiry > now).unwrap_or(true)
+            })
+            .collect::<Vec<_>>();
+        credits.sort_by(|lhs, rhs| match (lhs.expires_at, rhs.expires_at) {
+            (Some(lhs_expiry), Some(rhs_expiry)) => lhs_expiry.cmp(&rhs_expiry),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => lhs.granted_at.cmp(&rhs.granted_at),
+        });
+        credits
+    }
+}
+
 /// Complete usage snapshot for a provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSnapshot {
@@ -128,6 +169,9 @@ pub struct UsageSnapshot {
     pub tertiary: Option<RateWindow>,
     /// Cost/budget information
     pub cost: Option<CostSnapshot>,
+    /// Codex free/manual rate-limit reset credits.
+    #[serde(default)]
+    pub codex_reset_credits: Option<CodexResetCreditsSnapshot>,
     /// Identity information
     pub identity: Option<IdentitySnapshot>,
     /// When this snapshot was captured
@@ -176,6 +220,65 @@ mod tests {
         let now = Utc::now();
         let w = window(None, None);
         assert!(!w.is_expired(now - Duration::days(30), now));
+    }
+
+    #[test]
+    fn test_codex_reset_credits_filters_and_sorts_available_inventory() {
+        let now = Utc::now();
+        let later = now + Duration::days(2);
+        let earlier = now + Duration::days(1);
+        let snapshot = CodexResetCreditsSnapshot {
+            credits: vec![
+                CodexResetCredit {
+                    reset_type: "codex_rate_limits".to_string(),
+                    status: "available".to_string(),
+                    granted_at: now,
+                    expires_at: Some(later),
+                    redeem_started_at: None,
+                    redeemed_at: None,
+                    title: None,
+                    description: None,
+                },
+                CodexResetCredit {
+                    reset_type: "codex_rate_limits".to_string(),
+                    status: "redeemed".to_string(),
+                    granted_at: now,
+                    expires_at: Some(earlier),
+                    redeem_started_at: None,
+                    redeemed_at: None,
+                    title: None,
+                    description: None,
+                },
+                CodexResetCredit {
+                    reset_type: "codex_rate_limits".to_string(),
+                    status: "available".to_string(),
+                    granted_at: now,
+                    expires_at: Some(now - Duration::minutes(1)),
+                    redeem_started_at: None,
+                    redeemed_at: None,
+                    title: None,
+                    description: None,
+                },
+                CodexResetCredit {
+                    reset_type: "codex_rate_limits".to_string(),
+                    status: "available".to_string(),
+                    granted_at: now,
+                    expires_at: Some(earlier),
+                    redeem_started_at: None,
+                    redeemed_at: None,
+                    title: None,
+                    description: None,
+                },
+            ],
+            available_count: 2,
+            updated_at: now,
+        };
+
+        let available = snapshot.available_credits(now);
+
+        assert_eq!(available.len(), 2);
+        assert_eq!(available[0].expires_at, Some(earlier));
+        assert_eq!(available[1].expires_at, Some(later));
     }
 }
 

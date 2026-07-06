@@ -1,4 +1,7 @@
-use crate::models::{CostSnapshot, IdentitySnapshot, Provider, RateWindow, UsageSnapshot};
+use crate::models::{
+    CodexResetCredit, CodexResetCreditsSnapshot, CostSnapshot, IdentitySnapshot, Provider,
+    RateWindow, UsageSnapshot,
+};
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
 
@@ -31,6 +34,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
                 period: Some("Monthly".to_string()),
                 resets_at: Some(now + Duration::days(7)),
             }),
+            codex_reset_credits: None,
             identity: Some(IdentitySnapshot {
                 email: Some("user@example.com".to_string()),
                 plan: Some("Max".to_string()),
@@ -54,6 +58,23 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
             secondary: None,
             tertiary: None,
             cost: None,
+            codex_reset_credits: Some(CodexResetCreditsSnapshot {
+                credits: vec![CodexResetCredit {
+                    reset_type: "codex_rate_limits".to_string(),
+                    status: "available".to_string(),
+                    granted_at: now - Duration::days(3),
+                    expires_at: Some(now + Duration::days(27)),
+                    redeem_started_at: None,
+                    redeemed_at: None,
+                    title: Some("Full reset (Weekly + 5 hr)".to_string()),
+                    description: Some(
+                        "Thanks for using Codex! You've been granted one free rate limit reset."
+                            .to_string(),
+                    ),
+                }],
+                available_count: 1,
+                updated_at: now,
+            }),
             identity: Some(IdentitySnapshot {
                 email: Some("user@example.com".to_string()),
                 plan: Some("Pro".to_string()),
@@ -82,6 +103,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
             }),
             tertiary: None,
             cost: None,
+            codex_reset_credits: None,
             identity: Some(IdentitySnapshot {
                 email: Some("user@example.com".to_string()),
                 plan: Some("Free".to_string()),

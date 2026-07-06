@@ -1,4 +1,7 @@
-use crate::models::{IdentitySnapshot, Provider, RateWindow, UsageSnapshot};
+use crate::models::{
+    CodexResetCredit, CodexResetCreditsSnapshot, IdentitySnapshot, Provider, RateWindow,
+    UsageSnapshot,
+};
 use crate::providers::format_reset_time;
 use crate::providers::ProviderFetcher;
 use anyhow::{anyhow, Context, Result};
@@ -14,6 +17,7 @@ use std::path::PathBuf;
 const DEFAULT_CHATGPT_BASE_URL: &str = "https://chatgpt.com/backend-api";
 const CHATGPT_USAGE_PATH: &str = "/wham/usage";
 const CODEX_USAGE_PATH: &str = "/api/codex/usage";
+const RATE_LIMIT_RESET_CREDITS_PATH: &str = "/wham/rate-limit-reset-credits";
 const USER_AGENT: &str = "quotabar";
 
 #[derive(Debug, Deserialize)]
@@ -69,6 +73,39 @@ struct CreditDetails {
     #[allow(dead_code)]
     #[serde(default, deserialize_with = "deserialize_balance_opt")]
     balance: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResetCreditsResponse {
+    credits: Vec<ResetCreditResponse>,
+    available_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResetCreditResponse {
+    reset_type: String,
+    status: String,
+    granted_at: DateTime<Utc>,
+    expires_at: Option<DateTime<Utc>>,
+    redeem_started_at: Option<DateTime<Utc>>,
+    redeemed_at: Option<DateTime<Utc>>,
+    title: Option<String>,
+    description: Option<String>,
+}
+
+impl From<ResetCreditResponse> for CodexResetCredit {
+    fn from(value: ResetCreditResponse) -> Self {
+        Self {
+            reset_type: value.reset_type,
+            status: value.status,
+            granted_at: value.granted_at,
+            expires_at: value.expires_at,
+            redeem_started_at: value.redeem_started_at,
+            redeemed_at: value.redeemed_at,
+            title: value.title,
+            description: value.description,
+        }
+    }
 }
 
 pub struct CodexProvider {
@@ -163,13 +200,24 @@ impl CodexProvider {
         } else {
             CODEX_USAGE_PATH
         };
-        let full = format!("{}{}", normalized, path);
+        Self::parse_url_or_default(&normalized, path, CHATGPT_USAGE_PATH)
+    }
+
+    fn resolve_reset_credits_url() -> reqwest::Url {
+        let base = Self::resolve_chatgpt_base_url();
+        let normalized = Self::normalize_chatgpt_base_url(&base);
+        Self::parse_url_or_default(
+            &normalized,
+            RATE_LIMIT_RESET_CREDITS_PATH,
+            RATE_LIMIT_RESET_CREDITS_PATH,
+        )
+    }
+
+    fn parse_url_or_default(normalized_base: &str, path: &str, default_path: &str) -> reqwest::Url {
+        let full = format!("{}{}", normalized_base, path);
         reqwest::Url::parse(&full).unwrap_or_else(|_| {
-            reqwest::Url::parse(&format!(
-                "{}{}",
-                DEFAULT_CHATGPT_BASE_URL, CHATGPT_USAGE_PATH
-            ))
-            .expect("default Codex usage URL is valid")
+            reqwest::Url::parse(&format!("{}{}", DEFAULT_CHATGPT_BASE_URL, default_path))
+                .expect("default Codex URL is valid")
         })
     }
 
@@ -248,6 +296,52 @@ impl CodexProvider {
             .context("Failed to parse Codex usage response")
     }
 
+    async fn fetch_reset_credits(&self, creds: &Credentials) -> Result<CodexResetCreditsSnapshot> {
+        let url = Self::resolve_reset_credits_url();
+        let mut request = self
+            .client
+            .get(url)
+            .timeout(std::time::Duration::from_secs(4))
+            .header("Authorization", format!("Bearer {}", creds.access_token))
+            .header("Accept", "application/json")
+            .header("User-Agent", USER_AGENT)
+            .header("OpenAI-Beta", "codex-1")
+            .header("originator", "Codex Desktop");
+
+        if let Some(account_id) = creds
+            .account_id
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            request = request.header("ChatGPT-Account-ID", account_id);
+        }
+
+        let response = request
+            .send()
+            .await
+            .context("Failed to connect to Codex reset credits API")?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Codex reset credits API error ({}): {}",
+                status,
+                body
+            ));
+        }
+
+        let payload: ResetCreditsResponse = response
+            .json()
+            .await
+            .context("Failed to parse Codex reset credits response")?;
+        Ok(CodexResetCreditsSnapshot {
+            credits: payload.credits.into_iter().map(Into::into).collect(),
+            available_count: payload.available_count,
+            updated_at: Utc::now(),
+        })
+    }
+
     fn make_window(window: Option<&WindowSnapshot>, now: DateTime<Utc>) -> Option<RateWindow> {
         let window = window?;
         let reset = Utc.timestamp_opt(window.reset_at, 0).single();
@@ -323,6 +417,7 @@ impl ProviderFetcher for CodexProvider {
     async fn fetch(&self) -> Result<UsageSnapshot> {
         let creds = Self::load_credentials()?;
         let usage = self.fetch_usage(&creds).await?;
+        let reset_credits = self.fetch_reset_credits(&creds).await.ok();
         let now = Utc::now();
 
         let primary = usage
@@ -340,6 +435,7 @@ impl ProviderFetcher for CodexProvider {
             secondary,
             tertiary: None,
             cost: None,
+            codex_reset_credits: reset_credits,
             identity: Self::resolve_identity(&creds, &usage),
             updated_at: now,
         })

@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::mock::mock_snapshots;
 use crate::models::{Provider, UsageSnapshot};
 use crate::pace::{self, UsagePace};
+use crate::providers::format_reset_time;
 use anyhow::Result;
 use chrono::Utc;
 use gtk4::gdk::Display;
@@ -370,6 +371,12 @@ fn create_provider_section(snapshot: &UsageSnapshot, error: Option<&str>) -> Gtk
         section.append(&cost_box);
     }
 
+    if let Some(ref reset_credits) = snapshot.codex_reset_credits {
+        if let Some(reset_credits_box) = create_reset_credits_box(reset_credits, now) {
+            section.append(&reset_credits_box);
+        }
+    }
+
     // Show error banner if fetch failed (snapshot is stale/carried forward)
     if let Some(err) = error {
         let error_label = Label::new(Some(err));
@@ -477,6 +484,61 @@ fn create_quota_bar(
     }
 
     container
+}
+
+fn create_reset_credits_box(
+    snapshot: &crate::models::CodexResetCreditsSnapshot,
+    now: chrono::DateTime<Utc>,
+) -> Option<GtkBox> {
+    let available = snapshot.available_credits(now);
+    if available.is_empty() {
+        return None;
+    }
+
+    let container = GtkBox::new(Orientation::Vertical, 4);
+    container.add_css_class("reset-credits");
+
+    let row = GtkBox::new(Orientation::Horizontal, 8);
+    let title = Label::new(Some("Limit Reset Credits"));
+    title.add_css_class("reset-credits-title");
+    row.append(&title);
+
+    let count = if available.len() == 1 {
+        "1 available".to_string()
+    } else {
+        format!("{} available", available.len())
+    };
+    let count_label = Label::new(Some(&count));
+    count_label.add_css_class("reset-credits-count");
+    count_label.set_hexpand(true);
+    count_label.set_halign(Align::End);
+    row.append(&count_label);
+    container.append(&row);
+
+    let mut expiries = available
+        .iter()
+        .take(4)
+        .map(|credit| {
+            credit
+                .expires_at
+                .map(|expires_at| {
+                    format_reset_time(expires_at, now)
+                        .trim_start_matches("in ")
+                        .to_string()
+                })
+                .unwrap_or_else(|| "No expiry".to_string())
+        })
+        .collect::<Vec<_>>();
+    if available.len() > expiries.len() {
+        expiries.push(format!("+{}", available.len() - expiries.len()));
+    }
+
+    let expiry_label = Label::new(Some(&format!("󰥔 {}", expiries.join(" · "))));
+    expiry_label.add_css_class("reset-credits-expiry");
+    expiry_label.set_halign(Align::End);
+    container.append(&expiry_label);
+
+    Some(container)
 }
 
 fn create_provider_error_section(provider: &Provider, error: &str) -> GtkBox {
