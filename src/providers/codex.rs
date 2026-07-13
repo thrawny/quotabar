@@ -19,6 +19,8 @@ const CHATGPT_USAGE_PATH: &str = "/wham/usage";
 const CODEX_USAGE_PATH: &str = "/api/codex/usage";
 const RATE_LIMIT_RESET_CREDITS_PATH: &str = "/wham/rate-limit-reset-credits";
 const USER_AGENT: &str = "quotabar";
+const SESSION_WINDOW_MINUTES: i32 = 5 * 60;
+const WEEKLY_WINDOW_MINUTES: i32 = 7 * 24 * 60;
 
 #[derive(Debug, Deserialize)]
 struct AuthFile {
@@ -428,6 +430,10 @@ impl ProviderFetcher for CodexProvider {
             .rate_limit
             .as_ref()
             .and_then(|r| Self::make_window(r.secondary_window.as_ref(), now));
+        // Codex sometimes returns a weekly-only limit in `primary_window`.
+        // Normalize by duration so the UI does not label a 7-day window as a
+        // session or omit its weekly expiration.
+        let (primary, secondary) = normalize_rate_windows(primary, secondary);
 
         Ok(UsageSnapshot {
             provider: Provider::Codex,
@@ -443,6 +449,44 @@ impl ProviderFetcher for CodexProvider {
 
     fn name(&self) -> &'static str {
         "Codex"
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WindowRole {
+    Session,
+    Weekly,
+    Unknown,
+}
+
+fn window_role(window: &RateWindow) -> WindowRole {
+    match window.window_minutes {
+        Some(SESSION_WINDOW_MINUTES) => WindowRole::Session,
+        Some(WEEKLY_WINDOW_MINUTES) => WindowRole::Weekly,
+        _ => WindowRole::Unknown,
+    }
+}
+
+fn normalize_rate_windows(
+    primary: Option<RateWindow>,
+    secondary: Option<RateWindow>,
+) -> (Option<RateWindow>, Option<RateWindow>) {
+    match (primary, secondary) {
+        (Some(primary), Some(secondary)) => {
+            match (window_role(&primary), window_role(&secondary)) {
+                (WindowRole::Weekly, WindowRole::Session | WindowRole::Unknown) => {
+                    (Some(secondary), Some(primary))
+                }
+                _ => (Some(primary), Some(secondary)),
+            }
+        }
+        (Some(primary), None) if window_role(&primary) == WindowRole::Weekly => {
+            (None, Some(primary))
+        }
+        (None, Some(secondary)) if window_role(&secondary) != WindowRole::Weekly => {
+            (Some(secondary), None)
+        }
+        (primary, secondary) => (primary, secondary),
     }
 }
 
@@ -499,4 +543,71 @@ where
         )),
     }
     .map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn window(window_minutes: i32) -> RateWindow {
+        RateWindow {
+            used_percent: 5.0,
+            window_minutes: Some(window_minutes),
+            resets_at: None,
+            reset_description: None,
+        }
+    }
+
+    #[test]
+    fn normalizes_lone_weekly_window_into_secondary() {
+        let (primary, secondary) =
+            normalize_rate_windows(Some(window(WEEKLY_WINDOW_MINUTES)), None);
+
+        assert!(primary.is_none());
+        assert_eq!(
+            secondary.unwrap().window_minutes,
+            Some(WEEKLY_WINDOW_MINUTES)
+        );
+    }
+
+    #[test]
+    fn keeps_lone_session_window_in_primary() {
+        let (primary, secondary) =
+            normalize_rate_windows(Some(window(SESSION_WINDOW_MINUTES)), None);
+
+        assert_eq!(
+            primary.unwrap().window_minutes,
+            Some(SESSION_WINDOW_MINUTES)
+        );
+        assert!(secondary.is_none());
+    }
+
+    #[test]
+    fn keeps_session_and_weekly_ordering() {
+        let (primary, secondary) = normalize_rate_windows(
+            Some(window(SESSION_WINDOW_MINUTES)),
+            Some(window(WEEKLY_WINDOW_MINUTES)),
+        );
+
+        assert_eq!(
+            primary.unwrap().window_minutes,
+            Some(SESSION_WINDOW_MINUTES)
+        );
+        assert_eq!(
+            secondary.unwrap().window_minutes,
+            Some(WEEKLY_WINDOW_MINUTES)
+        );
+    }
+
+    #[test]
+    fn swaps_reversed_weekly_and_unknown_windows() {
+        let (primary, secondary) =
+            normalize_rate_windows(Some(window(WEEKLY_WINDOW_MINUTES)), Some(window(9 * 60)));
+
+        assert_eq!(primary.unwrap().window_minutes, Some(9 * 60));
+        assert_eq!(
+            secondary.unwrap().window_minutes,
+            Some(WEEKLY_WINDOW_MINUTES)
+        );
+    }
 }
