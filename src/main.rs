@@ -333,9 +333,24 @@ fn build_waybar_output(
         (secs > 0).then(|| format_session_glance(secs))
     });
 
-    // Build text: session % at full strength; the week % and the session
-    // time-left trail behind dimmed via Pango alpha. Session % leads because
-    // that's the at-a-glance number; time-left sits last as quiet context.
+    // Codex can expose only a weekly quota. In that case, use its reset as the
+    // at-a-glance time context that the missing session window cannot provide.
+    let week_time_left = if session.is_none() {
+        week.and_then(|(r, expired)| {
+            if expired {
+                return None;
+            }
+            let resets_at = r.resets_at?;
+            let secs = (resets_at - now).num_seconds();
+            (secs > 0).then(|| format_week_glance(secs))
+        })
+    } else {
+        None
+    };
+
+    // Build text: session % at full strength; the week % and reset time trail
+    // behind dimmed via Pango alpha. Session % leads when available because
+    // that's the at-a-glance number.
     let mut faint = Vec::new();
     if let Some(w) = week {
         faint.push(fmt(w));
@@ -355,7 +370,11 @@ fn build_waybar_output(
             )
         }
     } else if let Some(w) = week {
-        format!("{}{}", icon, fmt(w))
+        if let Some(t) = week_time_left {
+            format!("{}{} <span alpha='55%'>{}</span>", icon, fmt(w), t)
+        } else {
+            format!("{}{}", icon, fmt(w))
+        }
     } else {
         format!("{}--", icon)
     };
@@ -473,9 +492,55 @@ fn format_session_glance(secs: i64) -> String {
     }
 }
 
+/// Coarse weekly time-left for Waybar. Whole days are enough context until the
+/// reset is less than a day away, when hours (or minutes) become useful.
+fn format_week_glance(secs: i64) -> String {
+    let days = secs / (24 * 60 * 60);
+    if days > 0 {
+        format!("{}d", days)
+    } else {
+        format_session_glance(secs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_session_glance;
+    use super::{build_waybar_output, format_session_glance, format_week_glance};
+    use crate::models::{Provider, RateWindow, UsageSnapshot};
+    use chrono::{Duration, Utc};
+    use std::collections::HashMap;
+
+    #[test]
+    fn weekly_only_waybar_shows_time_until_reset() {
+        let now = Utc::now();
+        let snapshot = UsageSnapshot {
+            provider: Provider::Codex,
+            primary: None,
+            secondary: Some(RateWindow {
+                used_percent: 42.0,
+                window_minutes: Some(7 * 24 * 60),
+                resets_at: Some(now + Duration::days(3) + Duration::hours(2)),
+                reset_description: Some("in 3 days".to_string()),
+            }),
+            tertiary: None,
+            cost: None,
+            codex_reset_credits: None,
+            identity: None,
+            updated_at: now,
+        };
+        let snapshots = HashMap::from([(Provider::Codex, snapshot)]);
+
+        let output = build_waybar_output(&snapshots, Some(Provider::Codex), false);
+
+        assert_eq!(output.text, "42% <span alpha='55%'>3d</span>");
+    }
+
+    #[test]
+    fn weekly_glance_switches_from_days_to_hours() {
+        assert_eq!(format_week_glance(5 * 24 * 3600 + 19 * 3600), "5d");
+        assert_eq!(format_week_glance(19 * 3600), "19h");
+        assert_eq!(format_week_glance(45 * 60), "45m");
+    }
 
     #[test]
     fn glance_rounds_to_nearest_hour() {
