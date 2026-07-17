@@ -98,8 +98,11 @@ fn build_ui(
     let providers = [Provider::Claude, Provider::Codex, Provider::OpenCode];
     for provider in providers {
         if let Some(snapshot) = snapshots.get(&provider) {
-            let section =
-                create_provider_section(snapshot, errors.get(&provider).map(|s| s.as_str()));
+            let section = create_provider_section(
+                &window,
+                snapshot,
+                errors.get(&provider).map(|s| s.as_str()),
+            );
             if Some(snapshot.provider) == selected_provider {
                 section.add_css_class("selected");
             }
@@ -255,7 +258,11 @@ fn load_css(use_mock: bool, theme_name: &str) -> Option<RecommendedWatcher> {
     Some(watcher)
 }
 
-fn create_provider_section(snapshot: &UsageSnapshot, error: Option<&str>) -> GtkBox {
+fn create_provider_section(
+    window: &ApplicationWindow,
+    snapshot: &UsageSnapshot,
+    error: Option<&str>,
+) -> GtkBox {
     let section = GtkBox::new(Orientation::Vertical, 8);
     section.add_css_class("provider-section");
     if error.is_some() {
@@ -299,11 +306,20 @@ fn create_provider_section(snapshot: &UsageSnapshot, error: Option<&str>) -> Gtk
         link.set_label("Usage");
         link.add_css_class("usage-link");
         // GTK's default handler goes through the desktop portal, which fails
-        // silently on layer-shell windows; open via xdg-open instead
+        // silently on layer-shell windows. Hide the popup first so it releases
+        // its Wayland focus grab before Chromium handles the URL.
+        let window = window.clone();
         link.connect_activate_link(move |_| {
-            if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
-                eprintln!("Failed to open {}: {}", url, e);
-            }
+            window.set_visible(false);
+
+            let window = window.clone();
+            gtk4::glib::timeout_add_local_once(Duration::from_millis(50), move || {
+                if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
+                    eprintln!("Failed to open {}: {}", url, e);
+                }
+                window.close();
+            });
+
             gtk4::glib::Propagation::Stop
         });
         right_side.append(&link);
