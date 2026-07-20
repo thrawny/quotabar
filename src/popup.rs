@@ -370,6 +370,13 @@ fn create_provider_section(
         section.append(&bar);
     }
 
+    // Additional provider-specific quotas (for example, Claude's Fable-only week).
+    for named in &snapshot.extra_rate_windows {
+        let expired = named.window.is_expired(snapshot.updated_at, now);
+        let bar = create_quota_bar(&named.title, &named.window, None, expired);
+        section.append(&bar);
+    }
+
     // Cost info
     if let Some(ref cost) = snapshot.cost {
         let cost_box = GtkBox::new(Orientation::Horizontal, 4);

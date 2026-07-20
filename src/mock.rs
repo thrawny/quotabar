@@ -1,6 +1,6 @@
 use crate::models::{
-    CodexResetCredit, CodexResetCreditsSnapshot, CostSnapshot, IdentitySnapshot, Provider,
-    RateWindow, UsageSnapshot,
+    CodexResetCredit, CodexResetCreditsSnapshot, CostSnapshot, IdentitySnapshot, NamedRateWindow,
+    Provider, RateWindow, UsageSnapshot,
 };
 use chrono::{Duration, Utc};
 use std::collections::HashMap;
@@ -27,6 +27,16 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
                 reset_description: Some("in 3 days".to_string()),
             }),
             tertiary: None,
+            extra_rate_windows: vec![NamedRateWindow {
+                id: "claude-weekly-scoped-fable".to_string(),
+                title: "Fable only".to_string(),
+                window: RateWindow {
+                    used_percent: 33.0,
+                    window_minutes: Some(10080),
+                    resets_at: Some(now + Duration::days(3)),
+                    reset_description: Some("in 3 days".to_string()),
+                },
+            }],
             cost: Some(CostSnapshot {
                 used: 42.50,
                 limit: 100.0,
@@ -57,6 +67,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
             }),
             secondary: None,
             tertiary: None,
+            extra_rate_windows: vec![],
             cost: None,
             codex_reset_credits: Some(CodexResetCreditsSnapshot {
                 credits: vec![CodexResetCredit {
@@ -102,6 +113,7 @@ pub fn mock_snapshots() -> HashMap<Provider, UsageSnapshot> {
                 reset_description: Some("in 5 days".to_string()),
             }),
             tertiary: None,
+            extra_rate_windows: vec![],
             cost: None,
             codex_reset_credits: None,
             identity: Some(IdentitySnapshot {

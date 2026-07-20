@@ -440,6 +440,7 @@ impl ProviderFetcher for CodexProvider {
             primary,
             secondary,
             tertiary: None,
+            extra_rate_windows: vec![],
             cost: None,
             codex_reset_credits: reset_credits,
             identity: Self::resolve_identity(&creds, &usage),

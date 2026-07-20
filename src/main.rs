@@ -173,6 +173,14 @@ fn print_status(snapshot: &models::UsageSnapshot) {
             tertiary.reset_description.as_deref().unwrap_or("")
         );
     }
+    for named in &snapshot.extra_rate_windows {
+        println!(
+            "  {}: {:.0}% used {}",
+            named.title,
+            named.window.used_percent,
+            named.window.reset_description.as_deref().unwrap_or("")
+        );
+    }
     if let Some(ref cost) = snapshot.cost {
         println!(
             "  Cost:    ${:.2} / ${:.2} {}",
@@ -271,6 +279,11 @@ fn max_usage(snapshots: &HashMap<Provider, UsageSnapshot>) -> f64 {
             [&s.primary, &s.secondary, &s.tertiary]
                 .into_iter()
                 .filter_map(|w| w.as_ref().map(|r| r.used_percent))
+                .chain(
+                    s.extra_rate_windows
+                        .iter()
+                        .map(|named| named.window.used_percent),
+                )
         })
         .fold(0.0_f64, f64::max)
 }
@@ -311,6 +324,11 @@ fn build_waybar_output(
         .secondary
         .as_ref()
         .map(|r| (r, r.is_expired(snapshot.updated_at, now)));
+    let extra_windows = snapshot
+        .extra_rate_windows
+        .iter()
+        .map(|named| (named, named.window.is_expired(snapshot.updated_at, now)))
+        .collect::<Vec<_>>();
 
     let fmt = |(r, expired): (&models::RateWindow, bool)| {
         if expired {
@@ -419,6 +437,20 @@ fn build_waybar_output(
             tooltip_parts.push(week_line);
         }
     }
+    for (named, expired) in &extra_windows {
+        if *expired {
+            tooltip_parts.push(format!(
+                "{}: unknown (window lapsed, refresh pending)",
+                named.title
+            ));
+        } else {
+            let mut line = format!("{}: {:.0}%", named.title, named.window.used_percent);
+            if let Some(reset) = named.window.reset_description.as_deref() {
+                line.push_str(&format!(" (resets {reset})"));
+            }
+            tooltip_parts.push(line);
+        }
+    }
     if let Some(ref reset_credits) = snapshot.codex_reset_credits {
         tooltip_parts.extend(reset_credits_status_lines(reset_credits, now));
     }
@@ -429,6 +461,12 @@ fn build_waybar_output(
         .flatten()
         .filter(|(_, expired)| !expired)
         .map(|(r, _)| r.used_percent)
+        .chain(
+            extra_windows
+                .iter()
+                .filter(|(_, expired)| !expired)
+                .map(|(named, _)| named.window.used_percent),
+        )
         .fold(0.0_f64, f64::max);
     let mut class = if max_used >= 90.0 {
         vec!["critical".to_string()]
@@ -437,7 +475,10 @@ fn build_waybar_output(
     } else {
         vec![]
     };
-    if session.is_some_and(|(_, e)| e) || week.is_some_and(|(_, e)| e) {
+    if session.is_some_and(|(_, e)| e)
+        || week.is_some_and(|(_, e)| e)
+        || extra_windows.iter().any(|(_, expired)| *expired)
+    {
         class.push("stale".to_string());
     }
 
@@ -506,7 +547,7 @@ fn format_week_glance(secs: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{build_waybar_output, format_session_glance, format_week_glance};
-    use crate::models::{Provider, RateWindow, UsageSnapshot};
+    use crate::models::{NamedRateWindow, Provider, RateWindow, UsageSnapshot};
     use chrono::{Duration, Utc};
     use std::collections::HashMap;
 
@@ -523,6 +564,7 @@ mod tests {
                 reset_description: Some("in 3 days".to_string()),
             }),
             tertiary: None,
+            extra_rate_windows: vec![],
             cost: None,
             codex_reset_credits: None,
             identity: None,
@@ -533,6 +575,38 @@ mod tests {
         let output = build_waybar_output(&snapshots, Some(Provider::Codex), false);
 
         assert_eq!(output.text, "42% <span alpha='55%'>3d</span>");
+    }
+
+    #[test]
+    fn waybar_tooltip_shows_named_rate_window() {
+        let now = Utc::now();
+        let snapshot = UsageSnapshot {
+            provider: Provider::Claude,
+            primary: None,
+            secondary: None,
+            tertiary: None,
+            extra_rate_windows: vec![NamedRateWindow {
+                id: "claude-weekly-scoped-fable".to_string(),
+                title: "Fable only".to_string(),
+                window: RateWindow {
+                    used_percent: 33.0,
+                    window_minutes: Some(7 * 24 * 60),
+                    resets_at: Some(now + Duration::days(3)),
+                    reset_description: Some("in 3 days".to_string()),
+                },
+            }],
+            cost: None,
+            codex_reset_credits: None,
+            identity: None,
+            updated_at: now,
+        };
+        let snapshots = HashMap::from([(Provider::Claude, snapshot)]);
+
+        let output = build_waybar_output(&snapshots, Some(Provider::Claude), false);
+
+        assert!(output
+            .tooltip
+            .contains("Fable only: 33% (resets in 3 days)"));
     }
 
     #[test]

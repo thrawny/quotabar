@@ -1,10 +1,13 @@
-use crate::models::{CostSnapshot, IdentitySnapshot, Provider, RateWindow, UsageSnapshot};
+use crate::models::{
+    CostSnapshot, IdentitySnapshot, NamedRateWindow, Provider, RateWindow, UsageSnapshot,
+};
 use crate::providers::format_reset_time;
 use crate::providers::ProviderFetcher;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
 
@@ -72,7 +75,29 @@ struct UsageResponse {
     seven_day_oauth_apps: Option<RateWindowResponse>,
     seven_day_opus: Option<RateWindowResponse>,
     seven_day_sonnet: Option<RateWindowResponse>,
+    /// Newer Claude responses expose model-specific weekly quotas here.
+    limits: Option<Vec<LimitResponse>>,
     extra_usage: Option<ExtraUsageResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LimitResponse {
+    kind: Option<String>,
+    group: Option<String>,
+    percent: Option<f64>,
+    resets_at: Option<String>,
+    scope: Option<LimitScopeResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LimitScopeResponse {
+    model: Option<LimitModelResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LimitModelResponse {
+    id: Option<String>,
+    display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +114,85 @@ struct ExtraUsageResponse {
     #[allow(dead_code)]
     utilization: Option<f64>,
     currency: Option<String>,
+}
+
+fn scoped_weekly_windows(
+    limits: Option<Vec<LimitResponse>>,
+    now: DateTime<Utc>,
+) -> Vec<NamedRateWindow> {
+    let mut seen_ids = HashSet::new();
+
+    limits
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|limit| {
+            if limit.kind.as_deref() != Some("weekly_scoped")
+                || limit.group.as_deref() != Some("weekly")
+            {
+                return None;
+            }
+
+            let percent = limit.percent.filter(|value| value.is_finite())?;
+            let model = limit.scope?.model?;
+            let name = model.display_name.and_then(non_empty)?;
+            if slug(&name) == "all-models" {
+                return None;
+            }
+
+            let identity = model.id.and_then(non_empty).unwrap_or_else(|| name.clone());
+            let id_slug = slug(&identity);
+            if id_slug.is_empty() || id_slug == "all-models" || id_slug.ends_with("-all-models") {
+                return None;
+            }
+
+            let id = format!("claude-weekly-scoped-{id_slug}");
+            if !seen_ids.insert(id.clone()) {
+                return None;
+            }
+
+            let resets_at = limit.resets_at.as_deref().and_then(parse_iso8601);
+            Some(NamedRateWindow {
+                id,
+                title: scoped_window_title(&name),
+                window: RateWindow {
+                    used_percent: percent,
+                    window_minutes: Some(10080),
+                    resets_at,
+                    reset_description: resets_at.map(|dt| format_reset_time(dt, now)),
+                },
+            })
+        })
+        .collect()
+}
+
+fn non_empty(value: String) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn slug(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for character in value.to_lowercase().chars() {
+        if character.is_alphanumeric() {
+            slug.push(character);
+            last_was_dash = false;
+        } else if !last_was_dash && !slug.is_empty() {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    slug.trim_end_matches('-').to_string()
+}
+
+fn scoped_window_title(model_name: &str) -> String {
+    if model_name.to_lowercase().ends_with(" only") {
+        model_name.to_string()
+    } else {
+        format!("{model_name} only")
+    }
 }
 
 pub struct ClaudeProvider {
@@ -213,6 +317,8 @@ impl ClaudeProvider {
                 .map(|dt| format_reset_time(dt, now)),
         });
 
+        let extra_rate_windows = scoped_weekly_windows(usage.limits, now);
+
         // Cost: Extra usage (credits in cents)
         let cost = usage.extra_usage.and_then(|e| {
             if !e.is_enabled {
@@ -246,6 +352,7 @@ impl ClaudeProvider {
             primary,
             secondary,
             tertiary,
+            extra_rate_windows,
             cost,
             codex_reset_credits: None,
             identity: Some(IdentitySnapshot {
@@ -283,6 +390,7 @@ impl ClaudeProvider {
                 resets_at: None,
                 reset_description: w.reset_description,
             }),
+            extra_rate_windows: usage.scoped,
             cost: None,
             codex_reset_credits: None,
             identity: Some(IdentitySnapshot {
@@ -363,6 +471,7 @@ struct CliUsage {
     session: Option<CliWindow>,
     weekly: Option<CliWindow>,
     model: Option<CliWindow>,
+    scoped: Vec<NamedRateWindow>,
 }
 
 /// Strip ANSI escape sequences (CSI and OSC) from terminal output.
@@ -453,6 +562,7 @@ fn parse_cli_usage(raw: &str) -> Result<CliUsage> {
             "Current week (Opus)",
         ],
     );
+    let scoped = extract_cli_scoped_windows(&lines);
 
     if session.is_none() {
         if let Some(cli_error) = extract_cli_usage_error(&clean) {
@@ -467,6 +577,7 @@ fn parse_cli_usage(raw: &str) -> Result<CliUsage> {
         session,
         weekly,
         model,
+        scoped,
     })
 }
 
@@ -542,6 +653,73 @@ fn extract_cli_window(lines: &[&str], labels: &[&str]) -> Option<CliWindow> {
     })
 }
 
+/// Parse model-scoped `Current week (...)` sections such as Fable's quota.
+fn extract_cli_scoped_windows(lines: &[&str]) -> Vec<NamedRateWindow> {
+    let mut windows: Vec<NamedRateWindow> = Vec::new();
+
+    for (label_idx, line) in lines.iter().enumerate() {
+        let Some(model_name) = weekly_model_name(line) else {
+            continue;
+        };
+        let model_slug = slug(&model_name);
+        if matches!(
+            model_slug.as_str(),
+            "all-models" | "sonnet-only" | "sonnet" | "opus"
+        ) {
+            continue;
+        }
+
+        let mut used_percent = None;
+        let mut reset_description = None;
+        for candidate in lines.iter().skip(label_idx + 1).take(10) {
+            if weekly_model_name(candidate).is_some()
+                || normalize(candidate).starts_with("currentsession")
+                || normalize(candidate).starts_with("extrausage")
+            {
+                break;
+            }
+            used_percent = used_percent.or_else(|| extract_percent(candidate));
+            if reset_description.is_none() && normalize(candidate).starts_with("reset") {
+                reset_description = Some(candidate.trim().to_string());
+            }
+        }
+
+        let Some(used_percent) = used_percent else {
+            continue;
+        };
+        let id = format!("claude-weekly-scoped-{model_slug}");
+        let named = NamedRateWindow {
+            id: id.clone(),
+            title: scoped_window_title(&model_name),
+            window: RateWindow {
+                used_percent,
+                window_minutes: Some(10080),
+                resets_at: None,
+                reset_description,
+            },
+        };
+
+        // PTY captures may contain partial redraws. Keep the latest complete panel.
+        if let Some(existing) = windows.iter_mut().find(|window| window.id == id) {
+            *existing = named;
+        } else {
+            windows.push(named);
+        }
+    }
+
+    windows
+}
+
+fn weekly_model_name(line: &str) -> Option<String> {
+    if !normalize(line).contains("currentweek(") {
+        return None;
+    }
+    let start = line.find('(')? + 1;
+    let end = line[start..].find(')')? + start;
+    let name = line[start..end].trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 /// Extract a percentage (0-100) from a line containing "N%".
 fn extract_percent(line: &str) -> Option<f64> {
     let chars: Vec<char> = line.chars().collect();
@@ -590,6 +768,46 @@ mod tests {
 
         let dt = parse_iso8601("2024-01-15T10:30:00Z");
         assert!(dt.is_some());
+    }
+
+    #[test]
+    fn test_scoped_weekly_limits_from_api() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+                "five_hour": {"utilization": 11, "resets_at": null},
+                "seven_day": {"utilization": 9, "resets_at": null},
+                "limits": [
+                    {
+                        "kind": "weekly_all",
+                        "group": "weekly",
+                        "percent": 9,
+                        "scope": null
+                    },
+                    {
+                        "kind": "weekly_scoped",
+                        "group": "weekly",
+                        "percent": 5,
+                        "resets_at": "2026-07-08T09:00:00Z",
+                        "scope": {
+                            "model": {"id": null, "display_name": "Fable"}
+                        }
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+        let now = parse_iso8601("2026-07-03T09:00:00Z").unwrap();
+
+        let windows = scoped_weekly_windows(response.limits, now);
+
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].id, "claude-weekly-scoped-fable");
+        assert_eq!(windows[0].title, "Fable only");
+        assert_eq!(windows[0].window.used_percent, 5.0);
+        assert_eq!(
+            windows[0].window.reset_description.as_deref(),
+            Some("in 5 days")
+        );
     }
 
     #[test]
@@ -648,6 +866,34 @@ Settings: Status Config  Usage  (tab to cycle)
         assert_eq!(result.session.as_ref().unwrap().used_percent, 11.0);
         assert_eq!(result.weekly.as_ref().unwrap().used_percent, 1.0);
         assert_eq!(result.model.as_ref().unwrap().used_percent, 2.0);
+    }
+
+    #[test]
+    fn test_parse_cli_usage_fable_scoped_week() {
+        let input = "\
+Settings Status Config Usage Stats
+
+Current session
+9% used
+
+Current week (all models)
+67% used
+
+Current week (Fable)
+68% used
+Reset Jul 10 at 2:59am
+";
+
+        let result = parse_cli_usage(input).unwrap();
+
+        assert_eq!(result.scoped.len(), 1);
+        assert_eq!(result.scoped[0].id, "claude-weekly-scoped-fable");
+        assert_eq!(result.scoped[0].title, "Fable only");
+        assert_eq!(result.scoped[0].window.used_percent, 68.0);
+        assert_eq!(
+            result.scoped[0].window.reset_description.as_deref(),
+            Some("Reset Jul 10 at 2:59am")
+        );
     }
 
     #[test]

@@ -157,6 +157,14 @@ impl CodexResetCreditsSnapshot {
     }
 }
 
+/// A named provider-specific quota window (for example, Claude's Fable-only limit).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamedRateWindow {
+    pub id: String,
+    pub title: String,
+    pub window: RateWindow,
+}
+
 /// Complete usage snapshot for a provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageSnapshot {
@@ -167,6 +175,9 @@ pub struct UsageSnapshot {
     pub secondary: Option<RateWindow>,
     /// Tertiary quota (e.g., Opus limit)
     pub tertiary: Option<RateWindow>,
+    /// Additional named quotas, such as a model-scoped weekly limit.
+    #[serde(default)]
+    pub extra_rate_windows: Vec<NamedRateWindow>,
     /// Cost/budget information
     pub cost: Option<CostSnapshot>,
     /// Codex free/manual rate-limit reset credits.
@@ -293,6 +304,11 @@ impl UsageSnapshot {
         [&self.primary, &self.secondary, &self.tertiary]
             .iter()
             .filter_map(|w| w.as_ref().map(|r| r.remaining_percent()))
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
+            .chain(
+                self.extra_rate_windows
+                    .iter()
+                    .map(|named| named.window.remaining_percent()),
+            )
+            .min_by(|a, b| a.total_cmp(b))
     }
 }
