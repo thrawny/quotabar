@@ -67,6 +67,19 @@ background images:
 Running `quotabar waybar` without `--provider` outputs a single combined
 module with a generic icon, falling back across providers.
 
+### Expiring Codex reset credits
+
+When an available Codex reset credit is less than six hours from expiry,
+quotabar sends a critical desktop notification once per hour. During the final
+hour it repeats every 15 minutes. Notifications are deduplicated across
+multiple Waybar modules and can be disabled in
+`~/.config/quotabar/config.toml`:
+
+```toml
+[notifications]
+enabled = false
+```
+
 ## License
 
 MIT - see [LICENSE](LICENSE) for details.

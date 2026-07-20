@@ -17,6 +17,7 @@ mod config;
 mod icons;
 mod mock;
 mod models;
+mod notifications;
 mod pace;
 mod popup;
 mod providers;
@@ -218,6 +219,11 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
             MIN_FETCH_INTERVAL_SECS
         };
         if age.num_seconds() < interval {
+            notifications::maybe_notify_expiring_codex_reset(
+                &cached.snapshots,
+                &config.notifications,
+                Utc::now(),
+            );
             return build_waybar_output(&cached.snapshots, selected, show_icon);
         }
     }
@@ -266,6 +272,8 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
         updated_at: Utc::now(),
     };
     let _ = state.save();
+
+    notifications::maybe_notify_expiring_codex_reset(&snapshots, &config.notifications, Utc::now());
 
     // Build output from snapshots
     build_waybar_output(&snapshots, selected, show_icon)
