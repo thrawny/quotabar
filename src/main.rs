@@ -324,6 +324,27 @@ fn build_waybar_output(
         .secondary
         .as_ref()
         .map(|r| (r, r.is_expired(snapshot.updated_at, now)));
+    let fable_week = if snapshot.provider == Provider::Claude {
+        snapshot.extra_rate_windows.iter().find(|named| {
+            let title = named.title.trim().to_lowercase();
+            named
+                .id
+                .split('-')
+                .any(|part| part.eq_ignore_ascii_case("fable"))
+                || matches!(title.as_str(), "fable" | "fable only")
+        })
+    } else {
+        None
+    }
+    .map(|named| {
+        (
+            &named.window,
+            named.window.is_expired(snapshot.updated_at, now),
+        )
+    });
+    // Claude's model-scoped Fable quota is more useful at a glance than the
+    // all-model weekly quota. Fall back to the normal week when it is absent.
+    let display_week = fable_week.or(week);
     let extra_windows = snapshot
         .extra_rate_windows
         .iter()
@@ -351,10 +372,10 @@ fn build_waybar_output(
         (secs > 0).then(|| format_session_glance(secs))
     });
 
-    // Codex can expose only a weekly quota. In that case, use its reset as the
-    // at-a-glance time context that the missing session window cannot provide.
+    // When only a weekly quota is available, use its reset as the at-a-glance
+    // time context that the missing session window cannot provide.
     let week_time_left = if session.is_none() {
-        week.and_then(|(r, expired)| {
+        display_week.and_then(|(r, expired)| {
             if expired {
                 return None;
             }
@@ -370,7 +391,7 @@ fn build_waybar_output(
     // behind dimmed via Pango alpha. Session % leads when available because
     // that's the at-a-glance number.
     let mut faint = Vec::new();
-    if let Some(w) = week {
+    if let Some(w) = display_week {
         faint.push(fmt(w));
     }
     if let Some(t) = &session_time_left {
@@ -387,7 +408,7 @@ fn build_waybar_output(
                 faint.join(" ")
             )
         }
-    } else if let Some(w) = week {
+    } else if let Some(w) = display_week {
         if let Some(t) = week_time_left {
             format!("{}{} <span alpha='55%'>{}</span>", icon, fmt(w), t)
         } else {
@@ -591,7 +612,7 @@ mod tests {
                 window: RateWindow {
                     used_percent: 33.0,
                     window_minutes: Some(7 * 24 * 60),
-                    resets_at: Some(now + Duration::days(3)),
+                    resets_at: Some(now + Duration::days(3) + Duration::hours(2)),
                     reset_description: Some("in 3 days".to_string()),
                 },
             }],
@@ -604,9 +625,60 @@ mod tests {
 
         let output = build_waybar_output(&snapshots, Some(Provider::Claude), false);
 
+        assert_eq!(output.text, "33% <span alpha='55%'>3d</span>");
         assert!(output
             .tooltip
             .contains("Fable only: 33% (resets in 3 days)"));
+    }
+
+    #[test]
+    fn claude_waybar_prefers_fable_over_normal_week() {
+        let now = Utc::now();
+        let snapshot = UsageSnapshot {
+            provider: Provider::Claude,
+            primary: Some(RateWindow {
+                used_percent: 12.0,
+                window_minutes: Some(300),
+                resets_at: None,
+                reset_description: None,
+            }),
+            secondary: Some(RateWindow {
+                used_percent: 45.0,
+                window_minutes: Some(7 * 24 * 60),
+                resets_at: None,
+                reset_description: None,
+            }),
+            tertiary: None,
+            extra_rate_windows: vec![NamedRateWindow {
+                id: "claude-weekly-scoped-fable".to_string(),
+                title: "Fable only".to_string(),
+                window: RateWindow {
+                    used_percent: 33.0,
+                    window_minutes: Some(7 * 24 * 60),
+                    resets_at: None,
+                    reset_description: None,
+                },
+            }],
+            cost: None,
+            codex_reset_credits: None,
+            identity: None,
+            updated_at: now,
+        };
+        let mut snapshots = HashMap::from([(Provider::Claude, snapshot)]);
+
+        let output = build_waybar_output(&snapshots, Some(Provider::Claude), false);
+
+        assert_eq!(output.text, "12% <span alpha='55%'>33%</span>");
+        assert!(output.tooltip.contains("Week: 45%"));
+        assert!(output.tooltip.contains("Fable only: 33%"));
+
+        snapshots
+            .get_mut(&Provider::Claude)
+            .unwrap()
+            .extra_rate_windows
+            .clear();
+        let fallback = build_waybar_output(&snapshots, Some(Provider::Claude), false);
+        assert_eq!(fallback.text, "12% <span alpha='55%'>45%</span>");
     }
 
     #[test]
