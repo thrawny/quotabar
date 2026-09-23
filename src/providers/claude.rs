@@ -217,7 +217,7 @@ impl ClaudeProvider {
         let path = Self::credentials_path();
         if !path.exists() {
             return Err(anyhow!(
-                "Claude credentials not found at {}. Run `claude login` first.",
+                "Claude credentials not found at {}. Run `claude auth login` first.",
                 path.display()
             ));
         }
@@ -230,7 +230,7 @@ impl ClaudeProvider {
 
         creds
             .claude_ai_oauth
-            .ok_or_else(|| anyhow!("No OAuth credentials found. Run `claude login` first."))
+            .ok_or_else(|| anyhow!("No OAuth credentials found. Run `claude auth login` first."))
     }
 
     async fn fetch_usage(&self, token: &str) -> Result<UsageResponse> {
@@ -249,12 +249,12 @@ impl ClaudeProvider {
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(anyhow!(
-                "Claude OAuth token expired or invalid. Run `claude login` to refresh."
+                "Claude OAuth token expired or invalid. Run `claude auth login` to refresh."
             ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(anyhow!(
-                "Claude OAuth token missing required scope. Run `claude login` to refresh."
+                "Claude OAuth token missing required scope. Run `claude auth login` to refresh."
             ));
         }
         if !status.is_success() {
@@ -273,7 +273,7 @@ impl ClaudeProvider {
 
         if creds.is_expired() {
             return Err(anyhow!(
-                "Claude OAuth token expired. Run `claude login` to refresh."
+                "Claude OAuth token expired. Run `claude auth login` to refresh."
             ));
         }
 
@@ -592,10 +592,10 @@ fn extract_cli_usage_error(text: &str) -> Option<&'static str> {
         );
     }
     if lower.contains("token_expired") || lower.contains("token has expired") {
-        return Some("Claude CLI token expired. Run `claude login` to refresh.");
+        return Some("Claude CLI token expired. Run `claude auth login` to refresh.");
     }
     if lower.contains("authentication_error") {
-        return Some("Claude CLI authentication error. Run `claude login`.");
+        return Some("Claude CLI authentication error. Run `claude auth login`.");
     }
     if lower.contains("failed to load usage data") || compact.contains("failedtoloadusagedata") {
         return Some("Claude CLI could not load usage data. Open the CLI and retry `/usage`.");
@@ -957,7 +957,10 @@ Per-model breakdown unavailable (rate limited — try again in a moment)
     fn test_parse_cli_usage_authentication_error() {
         let input = r#"{"type":"authentication_error","message":"invalid token"}"#;
         let err = parse_cli_usage(input).err().unwrap().to_string();
-        assert_eq!(err, "Claude CLI authentication error. Run `claude login`.");
+        assert_eq!(
+            err,
+            "Claude CLI authentication error. Run `claude auth login`."
+        );
     }
 
     #[test]
