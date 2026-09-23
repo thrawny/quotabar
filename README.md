@@ -67,6 +67,26 @@ background images:
 Running `quotabar waybar` without `--provider` outputs a single combined
 module with a generic icon, falling back across providers.
 
+### Structured snapshots
+
+`quotabar snapshot` prints one JSON object for both Claude and Codex. It uses the
+same cache intervals and reset-credit notifications as Waybar. Failed refreshes
+retain the last successful provider snapshot and report an error. Each provider
+refresh has a 45-second deadline; providers refresh concurrently.
+
+The version 1 contract has `schema_version`, `generated_at`, `cache_updated_at`
+and a `providers` array in Claude/Codex order. Each provider includes identity,
+usage URL, availability, stale/error state, last successful update, plain-text
+summaries, quota windows, cost/budget and reset credits. Windows include the raw
+rate-window fields plus backend-computed expiry, severity, reset text, weekly
+pace text and expected usage. Credit records include their complete lifecycle
+and current availability. Frontends should reject unsupported schema versions,
+keep their last valid snapshot on process failure, and show stale/error state.
+
+Poll every 30 seconds. The backend fetches every five minutes normally and every
+30 seconds when usage is high. `quotabar snapshot --mock` emits fixtures without
+reading credentials/cache, contacting providers, or sending notifications.
+
 ### Expiring Codex reset credits
 
 When an available Codex reset credit is less than six hours from expiry,

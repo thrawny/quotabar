@@ -1,6 +1,5 @@
 /target
 /lab
-Cargo.lock
 *.swp
 *.swo
 *~

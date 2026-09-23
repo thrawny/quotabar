@@ -21,6 +21,7 @@ mod notifications;
 mod pace;
 mod popup;
 mod providers;
+mod snapshot;
 mod themes;
 
 const MIN_FETCH_INTERVAL_SECS: i64 = 300; // 5 minutes
@@ -49,6 +50,12 @@ enum Commands {
         #[arg(long)]
         provider: Option<Provider>,
     },
+    /// Print the versioned, markup-free snapshot consumed by desktop shells
+    Snapshot {
+        /// Use fixtures without reading credentials, cache, or sending notifications
+        #[arg(long)]
+        mock: bool,
+    },
     /// Print all provider status to terminal
     Status,
     /// Force fetch and update cache
@@ -67,6 +74,21 @@ async fn main() -> Result<()> {
             icons::ensure_icons();
             let output = waybar_output(provider).await;
             println!("{}", serde_json::to_string(&output).unwrap());
+        }
+        Commands::Snapshot { mock } => {
+            let state = if mock {
+                CacheState {
+                    snapshots: mock::mock_snapshots(),
+                    errors: HashMap::new(),
+                    updated_at: Utc::now(),
+                }
+            } else {
+                cached_state().await
+            };
+            println!(
+                "{}",
+                serde_json::to_string(&snapshot::build(&state, Utc::now()))?
+            );
         }
         Commands::Status => {
             match fetch_claude().await {
@@ -210,6 +232,13 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
     // With an explicit --provider the icon comes from Waybar CSS, so omit the glyph
     let show_icon = provider.is_none();
 
+    let state = cached_state().await;
+    build_waybar_output(&state.snapshots, selected, show_icon)
+}
+
+// Both frontends share the same polling policy and deduplicated notifications.
+async fn cached_state() -> CacheState {
+    let config = Config::load().unwrap_or_default();
     // Serve from cache if fresh enough (poll faster when usage is high)
     if let Some(cached) = CacheState::load().ok().flatten() {
         let age = Utc::now().signed_duration_since(cached.updated_at);
@@ -224,7 +253,7 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
                 &config.notifications,
                 Utc::now(),
             );
-            return build_waybar_output(&cached.snapshots, selected, show_icon);
+            return cached;
         }
     }
 
@@ -233,7 +262,9 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
     let mut snapshots = HashMap::new();
     let mut errors = HashMap::new();
 
-    match fetch_claude().await {
+    let (claude, codex) =
+        tokio::join!(bounded_fetch(fetch_claude()), bounded_fetch(fetch_codex()),);
+    match claude {
         Ok(snapshot) => {
             snapshots.insert(Provider::Claude, snapshot);
         }
@@ -249,7 +280,7 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
             }
         }
     }
-    match fetch_codex().await {
+    match codex {
         Ok(snapshot) => {
             snapshots.insert(Provider::Codex, snapshot);
         }
@@ -275,8 +306,16 @@ async fn waybar_output(provider: Option<Provider>) -> WaybarOutput {
 
     notifications::maybe_notify_expiring_codex_reset(&snapshots, &config.notifications, Utc::now());
 
-    // Build output from snapshots
-    build_waybar_output(&snapshots, selected, show_icon)
+    state
+}
+
+// A stalled provider must not hide the other provider or prevent stale-data output.
+async fn bounded_fetch(
+    fetch: impl std::future::Future<Output = Result<UsageSnapshot>>,
+) -> Result<UsageSnapshot> {
+    tokio::time::timeout(std::time::Duration::from_secs(45), fetch)
+        .await
+        .map_err(|_| anyhow::anyhow!("Provider refresh timed out"))?
 }
 
 /// Return the highest usage percentage across all providers and rate windows.

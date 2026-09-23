@@ -20,7 +20,7 @@ fetch:
 
 # Install locally
 install:
-    cargo install --path .
+    cargo install --locked --path .
 
 # Format, lint, and test
 check: fmt _clippy-strict test
